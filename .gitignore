@@ -1,0 +1,115 @@
+# ============================================================
+# AllDocs .gitignore
+# ============================================================
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+*~
+.fuse_hidden*
+.Trash-*
+
+# --- Editors / IDEs ---
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.iml
+*.swp
+*.swo
+*.bak
+
+# --- Secrets & local config ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+secrets/
+.secrets/
+
+# --- Logs ---
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Rust (core/) ---
+target/
+**/*.rs.bk
+Cargo.lock.bak
+# We DO commit Cargo.lock at the workspace root for reproducible builds.
+
+# --- Python (services/) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pdm-python
+__pypackages__/
+
+# --- Node / Next.js (web/) ---
+node_modules/
+.next/
+.turbo/
+.swc/
+.cache/
+.parcel-cache/
+out/
+dist/
+build/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+next-env.d.ts
+
+# --- pnpm ---
+.pnpm-store/
+.pnpm-debug.log*
+
+# --- Testing fixtures (private) ---
+tests/fixtures/private/
+tests/fixtures/**/private/
+
+# --- Generated artifacts ---
+proto/generated/
+**/__generated__/
+
+# --- Docker / Infra ---
+*.local.yml
+docker-compose.override.yml
+.docker/
+
+# --- Cloud creds ---
+.aws/
+.gcloud/
+.kube/
+
+# --- Coverage / profiling ---
+coverage/
+*.lcov
+flamegraph.svg
+perf.data*

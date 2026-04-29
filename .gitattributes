@@ -1,0 +1,54 @@
+# Default: text files use LF, binary files left alone.
+* text=auto eol=lf
+
+# Force LF on source code regardless of platform.
+*.rs        text eol=lf
+*.toml      text eol=lf
+*.py        text eol=lf
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.jsx       text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.proto     text eol=lf
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+
+# Windows-only scripts keep CRLF.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary fixtures and resources.
+*.pdf       binary
+*.docx      binary
+*.doc       binary
+*.xlsx      binary
+*.xls       binary
+*.pptx      binary
+*.ppt       binary
+*.odt       binary
+*.ods       binary
+*.odp       binary
+*.epub      binary
+*.mobi      binary
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.webp      binary
+*.tiff      binary
+*.heic      binary
+*.gif       binary
+*.ico       binary
+*.woff      binary
+*.woff2     binary
+*.ttf       binary
+*.otf       binary
+
+# Generated lockfiles — diff but never merge.
+pnpm-lock.yaml  -diff -merge
+Cargo.lock      -diff -merge
+poetry.lock     -diff -merge
