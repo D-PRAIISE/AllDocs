@@ -1,0 +1,2807 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Document",
+  "description": "Top-level UDM document. The shape of `content` is determined by `mode`.",
+  "type": "object",
+  "required": [
+    "content",
+    "id",
+    "metadata",
+    "mode",
+    "udm_version"
+  ],
+  "properties": {
+    "udm_version": {
+      "description": "SemVer of the UDM spec this document conforms to.",
+      "type": "string"
+    },
+    "id": {
+      "description": "Stable document identifier (UUIDv4 expected).",
+      "type": "string"
+    },
+    "mode": {
+      "description": "Primary content mode.",
+      "allOf": [
+        {
+          "$ref": "#/definitions/Mode"
+        }
+      ]
+    },
+    "metadata": {
+      "$ref": "#/definitions/Metadata"
+    },
+    "resources": {
+      "default": {
+        "colors": [],
+        "fonts": [],
+        "images": [],
+        "styles": []
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/Resources"
+        }
+      ]
+    },
+    "content": {
+      "$ref": "#/definitions/Content"
+    },
+    "extensions": {
+      "description": "Adapter-specific opaque data preserved verbatim through round-trip. Keys must be namespaced as `<adapter>.<key>` (UDM_SPEC.md §3).",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "definitions": {
+    "Mode": {
+      "type": "string",
+      "enum": [
+        "flow",
+        "fixed",
+        "sheet",
+        "slides",
+        "hybrid"
+      ]
+    },
+    "Metadata": {
+      "type": "object",
+      "required": [
+        "source_format",
+        "source_hash"
+      ],
+      "properties": {
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "subject": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "language": {
+          "description": "BCP-47 language tag, e.g. \"en-US\", \"zh-Hans\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "created_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "modified_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_format": {
+          "$ref": "#/definitions/SourceFormat"
+        },
+        "source_hash": {
+          "description": "SHA-256 hex of the source bytes.",
+          "type": "string"
+        },
+        "custom_properties": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "SourceFormat": {
+      "type": "object",
+      "required": [
+        "extension",
+        "mime"
+      ],
+      "properties": {
+        "mime": {
+          "type": "string"
+        },
+        "extension": {
+          "type": "string"
+        },
+        "variant": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "producer": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Resources": {
+      "type": "object",
+      "properties": {
+        "fonts": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FontResource"
+          }
+        },
+        "images": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ImageResource"
+          }
+        },
+        "styles": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/StyleResource"
+          }
+        },
+        "colors": {
+          "default": [],
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ColorResource"
+          }
+        },
+        "embedded_objects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/EmbeddedObject"
+          }
+        }
+      }
+    },
+    "FontResource": {
+      "description": "A font face usable by text content. The `source` field tells the editor whether glyph fallback may be needed: - `Embedded` → may be a subset; check `has_glyph` before insertion - `System`   → assumed full font, but availability not guaranteed at render time - `Google`   → fetch from Google Fonts CDN - `Substituted` → original font wasn't available; `substituted_for` names the original\n\n(See `project_alldocs_pdf_adapter.md` lesson #1.)",
+      "type": "object",
+      "required": [
+        "family",
+        "id",
+        "source",
+        "style",
+        "weight"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "family": {
+          "type": "string"
+        },
+        "weight": {
+          "type": "integer",
+          "format": "uint16",
+          "minimum": 0.0
+        },
+        "style": {
+          "$ref": "#/definitions/FontStyle"
+        },
+        "source": {
+          "$ref": "#/definitions/FontSource"
+        },
+        "data_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "license": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fallback_chain": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "substituted_for": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "_meta": {
+          "description": "Adapter-specific opaque metadata (e.g. PDF subset prefix). Reserved per spec §13.",
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "FontStyle": {
+      "type": "string",
+      "enum": [
+        "normal",
+        "italic",
+        "oblique"
+      ]
+    },
+    "FontSource": {
+      "type": "string",
+      "enum": [
+        "embedded",
+        "system",
+        "google",
+        "substituted"
+      ]
+    },
+    "ImageResource": {
+      "type": "object",
+      "required": [
+        "data_ref",
+        "format",
+        "height",
+        "id",
+        "width"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "format": {
+          "$ref": "#/definitions/ImageFormat"
+        },
+        "width": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "height": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "dpi": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "data_ref": {
+          "type": "string"
+        },
+        "alt_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "color_profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ImageFormat": {
+      "type": "string",
+      "enum": [
+        "png",
+        "jpeg",
+        "webp",
+        "tiff",
+        "svg",
+        "heic",
+        "raw"
+      ]
+    },
+    "StyleResource": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "properties"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "inherits": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "properties": {
+          "$ref": "#/definitions/StyleProperties"
+        }
+      }
+    },
+    "StyleProperties": {
+      "description": "Reusable style block referenced from content via `style_id`.",
+      "type": "object",
+      "properties": {
+        "font_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "font_size": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Length"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ColorRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "background": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ColorRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "alignment": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Alignment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line_height": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LineHeight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "letter_spacing": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Length"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "margin": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Edges_for_Length"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "padding": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Edges_for_Length"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "border": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/BorderSet"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Length": {
+      "description": "A length value with an explicit unit. Importers should preserve the unit from the source format when possible; the editor and exporters convert as needed.",
+      "type": "object",
+      "required": [
+        "unit",
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "type": "number",
+          "format": "double"
+        },
+        "unit": {
+          "$ref": "#/definitions/Unit"
+        }
+      }
+    },
+    "Unit": {
+      "type": "string",
+      "enum": [
+        "px",
+        "pt",
+        "pc",
+        "in",
+        "cm",
+        "mm",
+        "em",
+        "%"
+      ]
+    },
+    "ColorRef": {
+      "description": "Color reference: either a literal value or a pointer to a named ColorResource. Exactly one of `ref` / `literal` should be present; we don't enforce that at the type level (it's a spec validation concern, see UDM_SPEC.md §12).",
+      "type": "object",
+      "properties": {
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "literal": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ColorValue"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "ColorValue": {
+      "description": "Concrete color value in one of several color spaces.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "b",
+            "g",
+            "kind",
+            "r"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rgb"
+              ]
+            },
+            "r": {
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0.0
+            },
+            "g": {
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0.0
+            },
+            "b": {
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0.0
+            },
+            "a": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint8",
+              "minimum": 0.0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "c",
+            "k",
+            "kind",
+            "m",
+            "y"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "cmyk"
+              ]
+            },
+            "c": {
+              "type": "number",
+              "format": "double"
+            },
+            "m": {
+              "type": "number",
+              "format": "double"
+            },
+            "y": {
+              "type": "number",
+              "format": "double"
+            },
+            "k": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "hex",
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "hex"
+              ]
+            },
+            "hex": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "name"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "named"
+              ]
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "Alignment": {
+      "type": "string",
+      "enum": [
+        "left",
+        "right",
+        "center",
+        "justify",
+        "start",
+        "end"
+      ]
+    },
+    "LineHeight": {
+      "description": "Line height: either a unitless multiplier (e.g. 1.5) or an explicit length.",
+      "anyOf": [
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "$ref": "#/definitions/Length"
+        }
+      ]
+    },
+    "Edges_for_Length": {
+      "description": "Edge values keyed by side (top/right/bottom/left). All sides optional; missing sides mean \"no override\".",
+      "type": "object",
+      "properties": {
+        "top": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Length"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Length"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bottom": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Length"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Length"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "BorderSet": {
+      "type": "object",
+      "properties": {
+        "top": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Border"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "right": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Border"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bottom": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Border"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "left": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Border"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Border": {
+      "type": "object",
+      "required": [
+        "color",
+        "style",
+        "width"
+      ],
+      "properties": {
+        "width": {
+          "$ref": "#/definitions/Length"
+        },
+        "style": {
+          "$ref": "#/definitions/BorderStyle"
+        },
+        "color": {
+          "$ref": "#/definitions/ColorRef"
+        }
+      }
+    },
+    "BorderStyle": {
+      "type": "string",
+      "enum": [
+        "solid",
+        "dashed",
+        "dotted",
+        "double",
+        "none"
+      ]
+    },
+    "ColorResource": {
+      "type": "object",
+      "required": [
+        "id",
+        "value"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "$ref": "#/definitions/ColorValue"
+        },
+        "profile": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "EmbeddedObject": {
+      "description": "Opaque container for embedded OLE objects, charts, and other format-specific payloads we don't yet model structurally. v0.2 will define typed variants.",
+      "type": "object",
+      "required": [
+        "data_ref",
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "data_ref": {
+          "type": "string"
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "Content": {
+      "description": "Discriminated union of content trees. Disambiguated by which top-level field is present (each content type has unique fields: `blocks`, `pages`, `sheets`, `slides`, `primary`).",
+      "anyOf": [
+        {
+          "$ref": "#/definitions/FlowContent"
+        },
+        {
+          "$ref": "#/definitions/FixedContent"
+        },
+        {
+          "$ref": "#/definitions/SheetContent"
+        },
+        {
+          "$ref": "#/definitions/SlidesContent"
+        },
+        {
+          "$ref": "#/definitions/HybridContent"
+        }
+      ]
+    },
+    "FlowContent": {
+      "type": "object",
+      "required": [
+        "blocks"
+      ],
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Block"
+          }
+        }
+      }
+    },
+    "Block": {
+      "description": "Block-level flow content. Tag: `type`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "inlines",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "paragraph"
+              ]
+            },
+            "style_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inlines": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Inline"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "inlines",
+            "level",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "heading"
+              ]
+            },
+            "level": {
+              "type": "integer",
+              "format": "uint8",
+              "minimum": 0.0
+            },
+            "style_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inlines": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Inline"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "items",
+            "ordered",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "list"
+              ]
+            },
+            "ordered": {
+              "type": "boolean"
+            },
+            "style_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "start": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0.0
+            },
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/ListItem"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "rows",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "table"
+              ]
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/TableRow"
+              }
+            },
+            "column_widths": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Length"
+              }
+            },
+            "style_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "caption": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Inline"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "content",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "code"
+              ]
+            },
+            "language": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "content": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "blocks",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "quote"
+              ]
+            },
+            "blocks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Block"
+              }
+            },
+            "citation": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Inline"
+              }
+            }
+          }
+        },
+        {
+          "description": "Empty marker block (horizontal rule).",
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "divider"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "image_id",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "image"
+              ]
+            },
+            "image_id": {
+              "type": "string"
+            },
+            "caption": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Inline"
+              }
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Length"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "height": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Length"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "alignment": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/ImageAlignment"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "description": "Generic embed for math, charts, OLE, iframes etc. Payload shape depends on `kind`.",
+          "type": "object",
+          "required": [
+            "data",
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "embed"
+              ]
+            },
+            "kind": {
+              "$ref": "#/definitions/EmbedKind"
+            },
+            "data": true
+          }
+        }
+      ]
+    },
+    "Inline": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "text",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "text"
+              ]
+            },
+            "text": {
+              "type": "string"
+            },
+            "style_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "marks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Mark"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "br"
+              ]
+            },
+            "hard": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "image_id",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "image_inline"
+              ]
+            },
+            "image_id": {
+              "type": "string"
+            },
+            "width": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Length"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "height": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Length"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "href",
+            "inlines",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "link"
+              ]
+            },
+            "href": {
+              "type": "string"
+            },
+            "title": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inlines": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Inline"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "source",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "math"
+              ]
+            },
+            "source": {
+              "$ref": "#/definitions/MathSource"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "blocks",
+            "id",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "footnote"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "blocks": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Block"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "display",
+            "key",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "citation"
+              ]
+            },
+            "key": {
+              "type": "string"
+            },
+            "display": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/Inline"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Mark": {
+      "description": "Inline-level formatting overrides that sit on top of a TextRun's `style_id`. Tagged enum: serialized as `{ \"type\": \"bold\" }`, `{ \"type\": \"color\", \"color\": ... }`, etc.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "bold"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "italic"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "underline"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "strikethrough"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "superscript"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "subscript"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "code"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "color",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "color"
+              ]
+            },
+            "color": {
+              "$ref": "#/definitions/ColorRef"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "color",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "highlight"
+              ]
+            },
+            "color": {
+              "$ref": "#/definitions/ColorRef"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "font_id",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "font"
+              ]
+            },
+            "font_id": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "size",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "size"
+              ]
+            },
+            "size": {
+              "$ref": "#/definitions/Length"
+            }
+          }
+        }
+      ]
+    },
+    "MathSource": {
+      "type": "object",
+      "properties": {
+        "mathml": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "latex": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ListItem": {
+      "type": "object",
+      "required": [
+        "blocks"
+      ],
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Block"
+          }
+        }
+      }
+    },
+    "TableRow": {
+      "type": "object",
+      "required": [
+        "cells"
+      ],
+      "properties": {
+        "cells": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TableCell"
+          }
+        },
+        "is_header": {
+          "type": "boolean"
+        }
+      }
+    },
+    "TableCell": {
+      "type": "object",
+      "required": [
+        "blocks"
+      ],
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Block"
+          }
+        },
+        "colspan": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "rowspan": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "style_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "ImageAlignment": {
+      "type": "string",
+      "enum": [
+        "left",
+        "center",
+        "right",
+        "inline"
+      ]
+    },
+    "EmbedKind": {
+      "type": "string",
+      "enum": [
+        "math",
+        "chart",
+        "ole",
+        "iframe"
+      ]
+    },
+    "FixedContent": {
+      "type": "object",
+      "required": [
+        "pages"
+      ],
+      "properties": {
+        "pages": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Page"
+          }
+        }
+      }
+    },
+    "Page": {
+      "type": "object",
+      "required": [
+        "height",
+        "layers",
+        "number",
+        "width"
+      ],
+      "properties": {
+        "number": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "width": {
+          "$ref": "#/definitions/Length"
+        },
+        "height": {
+          "$ref": "#/definitions/Length"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PageBackground"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Layer"
+          }
+        },
+        "flow_projection": {
+          "description": "Optional reflow-friendly projection of this page's content. Importers that can produce one (e.g. when a PDF has a tagged structure tree) store it here so the editor can offer a \"edit text\" UX without losing the underlying fixed layout.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FlowContent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "PageBackground": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ColorRef"
+        },
+        {
+          "type": "object",
+          "required": [
+            "image_id"
+          ],
+          "properties": {
+            "image_id": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "Layer": {
+      "description": "Layer in a Page. Tagged by `type`; rendered back-to-front in array order.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "runs",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "text"
+              ]
+            },
+            "runs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/PositionedTextRun"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "height",
+            "image_id",
+            "type",
+            "width",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "image"
+              ]
+            },
+            "image_id": {
+              "type": "string"
+            },
+            "x": {
+              "$ref": "#/definitions/Length"
+            },
+            "y": {
+              "$ref": "#/definitions/Length"
+            },
+            "width": {
+              "$ref": "#/definitions/Length"
+            },
+            "height": {
+              "$ref": "#/definitions/Length"
+            },
+            "rotation": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "opacity": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "geometry",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "shape"
+              ]
+            },
+            "geometry": {
+              "$ref": "#/definitions/Geometry"
+            },
+            "fill": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Paint"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stroke": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Stroke"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "transform": {
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/Matrix2D"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "opacity": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            }
+          }
+        },
+        {
+          "description": "Annotation kinds: highlight, comment, stamp, ink, link, redaction. kind-specific payloads are stubbed for v0.1; v0.2 will define typed variants.",
+          "type": "object",
+          "required": [
+            "data",
+            "kind",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "annotation"
+              ]
+            },
+            "kind": {
+              "$ref": "#/definitions/AnnotationKind"
+            },
+            "data": true
+          }
+        },
+        {
+          "description": "AcroForm or XFA fields. Per-field shape stubbed for v0.1, see UDM_SPEC.md §14.",
+          "type": "object",
+          "required": [
+            "fields",
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "form"
+              ]
+            },
+            "fields": {
+              "type": "array",
+              "items": true
+            }
+          }
+        }
+      ]
+    },
+    "PositionedTextRun": {
+      "type": "object",
+      "required": [
+        "color",
+        "font_id",
+        "font_size",
+        "text",
+        "x",
+        "y"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "font_id": {
+          "type": "string"
+        },
+        "font_size": {
+          "$ref": "#/definitions/Length"
+        },
+        "color": {
+          "$ref": "#/definitions/ColorRef"
+        },
+        "x": {
+          "description": "Baseline origin x.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Length"
+            }
+          ]
+        },
+        "y": {
+          "description": "Baseline origin y.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Length"
+            }
+          ]
+        },
+        "advances": {
+          "description": "Optional explicit per-glyph advances (kerning, complex scripts).",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "rotation": {
+          "description": "Rotation in degrees about (x, y).",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "transform": {
+          "description": "If present, takes precedence over x/y/rotation.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Matrix2D"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ocr": {
+          "description": "Marker that this run came from OCR, not from encoded text in the source.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/OcrInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "Matrix2D": {
+      "description": "Affine 2D transformation matrix in standard PDF/SVG form: `[a b 0; c d 0; e f 1]`, where (e, f) is the translation.",
+      "type": "object",
+      "required": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f"
+      ],
+      "properties": {
+        "a": {
+          "type": "number",
+          "format": "double"
+        },
+        "b": {
+          "type": "number",
+          "format": "double"
+        },
+        "c": {
+          "type": "number",
+          "format": "double"
+        },
+        "d": {
+          "type": "number",
+          "format": "double"
+        },
+        "e": {
+          "type": "number",
+          "format": "double"
+        },
+        "f": {
+          "type": "number",
+          "format": "double"
+        }
+      }
+    },
+    "OcrInfo": {
+      "type": "object",
+      "required": [
+        "confidence",
+        "engine"
+      ],
+      "properties": {
+        "confidence": {
+          "type": "number",
+          "format": "double"
+        },
+        "engine": {
+          "type": "string"
+        }
+      }
+    },
+    "Geometry": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "d",
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "path"
+              ]
+            },
+            "d": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "h",
+            "kind",
+            "w",
+            "x",
+            "y"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "rect"
+              ]
+            },
+            "x": {
+              "$ref": "#/definitions/Length"
+            },
+            "y": {
+              "$ref": "#/definitions/Length"
+            },
+            "w": {
+              "$ref": "#/definitions/Length"
+            },
+            "h": {
+              "$ref": "#/definitions/Length"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "cx",
+            "cy",
+            "kind",
+            "rx",
+            "ry"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "ellipse"
+              ]
+            },
+            "cx": {
+              "$ref": "#/definitions/Length"
+            },
+            "cy": {
+              "$ref": "#/definitions/Length"
+            },
+            "rx": {
+              "$ref": "#/definitions/Length"
+            },
+            "ry": {
+              "$ref": "#/definitions/Length"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "points"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "polygon"
+              ]
+            },
+            "points": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": [
+                  {
+                    "$ref": "#/definitions/Length"
+                  },
+                  {
+                    "$ref": "#/definitions/Length"
+                  }
+                ],
+                "maxItems": 2,
+                "minItems": 2
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Paint": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "color",
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "solid"
+              ]
+            },
+            "color": {
+              "$ref": "#/definitions/ColorRef"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "angle",
+            "kind",
+            "stops"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "linear_gradient"
+              ]
+            },
+            "stops": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/GradientStop"
+              }
+            },
+            "angle": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "stops"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "radial_gradient"
+              ]
+            },
+            "stops": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/GradientStop"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "image_id",
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "pattern"
+              ]
+            },
+            "image_id": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "GradientStop": {
+      "type": "object",
+      "required": [
+        "color",
+        "offset"
+      ],
+      "properties": {
+        "offset": {
+          "type": "number",
+          "format": "double"
+        },
+        "color": {
+          "$ref": "#/definitions/ColorRef"
+        }
+      }
+    },
+    "Stroke": {
+      "type": "object",
+      "required": [
+        "paint",
+        "width"
+      ],
+      "properties": {
+        "paint": {
+          "$ref": "#/definitions/Paint"
+        },
+        "width": {
+          "$ref": "#/definitions/Length"
+        },
+        "cap": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LineCap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "join": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LineJoin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dash": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      }
+    },
+    "LineCap": {
+      "type": "string",
+      "enum": [
+        "butt",
+        "round",
+        "square"
+      ]
+    },
+    "LineJoin": {
+      "type": "string",
+      "enum": [
+        "miter",
+        "round",
+        "bevel"
+      ]
+    },
+    "AnnotationKind": {
+      "type": "string",
+      "enum": [
+        "highlight",
+        "comment",
+        "stamp",
+        "ink",
+        "link",
+        "redaction"
+      ]
+    },
+    "SheetContent": {
+      "type": "object",
+      "required": [
+        "sheets"
+      ],
+      "properties": {
+        "sheets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Sheet"
+          }
+        },
+        "named_ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NamedRange"
+          }
+        },
+        "defined_names": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DefinedName"
+          }
+        }
+      }
+    },
+    "Sheet": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "cells": {
+          "description": "Sparse cell map keyed by A1 address.",
+          "default": {},
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/Cell"
+          }
+        },
+        "row_heights": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/Length"
+          }
+        },
+        "column_widths": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/Length"
+          }
+        },
+        "merges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/CellRange"
+          }
+        },
+        "charts": {
+          "type": "array",
+          "items": true
+        },
+        "pivot_tables": {
+          "type": "array",
+          "items": true
+        },
+        "conditional_formats": {
+          "type": "array",
+          "items": true
+        },
+        "protection": true,
+        "hidden": {
+          "type": "boolean"
+        }
+      }
+    },
+    "Cell": {
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "properties": {
+        "value": {
+          "$ref": "#/definitions/CellValue"
+        },
+        "formula": {
+          "description": "Original formula text, e.g. \"=SUM(A1:A10)\".",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "display": {
+          "description": "Cached display string from the source.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "format": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "style_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comment": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CellComment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hyperlink": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "CellValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "number"
+              ]
+            },
+            "value": {
+              "type": "number",
+              "format": "double"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "string"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "boolean"
+              ]
+            },
+            "value": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "description": "ISO 8601.",
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "date"
+              ]
+            },
+            "value": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "code",
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "error"
+              ]
+            },
+            "code": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "empty"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "CellComment": {
+      "type": "object",
+      "required": [
+        "author",
+        "text"
+      ],
+      "properties": {
+        "author": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    "CellRange": {
+      "type": "object",
+      "required": [
+        "end",
+        "start"
+      ],
+      "properties": {
+        "start": {
+          "type": "string"
+        },
+        "end": {
+          "type": "string"
+        }
+      }
+    },
+    "NamedRange": {
+      "type": "object",
+      "required": [
+        "name",
+        "range"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "range": {
+          "$ref": "#/definitions/CellRange"
+        },
+        "sheet_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "DefinedName": {
+      "type": "object",
+      "required": [
+        "expression",
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "expression": {
+          "type": "string"
+        },
+        "scope": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "SlidesContent": {
+      "type": "object",
+      "required": [
+        "slides"
+      ],
+      "properties": {
+        "slides": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Slide"
+          }
+        },
+        "masters": {
+          "default": [],
+          "type": "array",
+          "items": true
+        },
+        "layouts": {
+          "default": [],
+          "type": "array",
+          "items": true
+        },
+        "theme": {
+          "default": null
+        }
+      }
+    },
+    "Slide": {
+      "type": "object",
+      "required": [
+        "height",
+        "id",
+        "layout_id",
+        "number",
+        "shapes",
+        "width"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "layout_id": {
+          "type": "string"
+        },
+        "number": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0.0
+        },
+        "width": {
+          "$ref": "#/definitions/Length"
+        },
+        "height": {
+          "$ref": "#/definitions/Length"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SlideBackground"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SlideShape"
+          }
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FlowContent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transitions": true,
+        "animations": {
+          "type": "array",
+          "items": true
+        },
+        "hidden": {
+          "type": "boolean"
+        }
+      }
+    },
+    "SlideBackground": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/ColorRef"
+        },
+        {
+          "type": "object",
+          "required": [
+            "image_id"
+          ],
+          "properties": {
+            "image_id": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "SlideShape": {
+      "description": "A shape on a slide. Reuses fixed-mode `Layer` for positioning, plus placeholder semantics from the slide layout system.",
+      "type": "object",
+      "required": [
+        "layer"
+      ],
+      "properties": {
+        "layer": {
+          "$ref": "#/definitions/Layer"
+        },
+        "placeholder": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PlaceholderKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "PlaceholderKind": {
+      "type": "string",
+      "enum": [
+        "title",
+        "subtitle",
+        "body",
+        "image",
+        "chart",
+        "table",
+        "footer",
+        "header",
+        "slide_number",
+        "date_time",
+        "other"
+      ]
+    },
+    "HybridContent": {
+      "type": "object",
+      "required": [
+        "layers",
+        "primary"
+      ],
+      "properties": {
+        "primary": {
+          "description": "Which mode the document is \"primarily\" in. Editor uses this to pick the default editing tool and toolbar.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/Mode"
+            }
+          ]
+        },
+        "layers": {
+          "$ref": "#/definitions/HybridLayers"
+        }
+      }
+    },
+    "HybridLayers": {
+      "type": "object",
+      "properties": {
+        "flow": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FlowContent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fixed": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FixedContent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sheet": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SheetContent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "slides": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SlidesContent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
