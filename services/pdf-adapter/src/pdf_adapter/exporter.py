@@ -116,6 +116,9 @@ def _base14_for(font: dict[str, Any]) -> str:
 # ---- Pages ---------------------------------------------------------------
 
 
+_LAYER_ORDER = {"image": 0, "shape": 1, "annotation": 2, "text": 3, "form": 4}
+
+
 def _render_page(
     doc: pymupdf.Document,
     page_data: dict[str, Any],
@@ -127,13 +130,24 @@ def _render_page(
     height_pt = _length_to_pt(page_data["height"])
     page = doc.new_page(width=width_pt, height=height_pt)
 
-    for layer in page_data.get("layers", []):
+    # Reorder layers so images render below text. The importer currently
+    # appends text first then images, but PDF z-order is bottom-up; if we
+    # used import order the images would cover the text. Long-term the
+    # importer should capture true content-stream order so we don't need
+    # this heuristic. (See project_alldocs_pdf_adapter.md lesson #11.)
+    layers = sorted(
+        page_data.get("layers", []),
+        key=lambda layer: _LAYER_ORDER.get(layer.get("type", ""), 99),
+    )
+    for layer in layers:
         kind = layer.get("type")
         if kind == "text":
             _render_text_layer(page, layer, font_handles)
         elif kind == "image":
             _render_image_layer(page, layer, resources, base)
-        # shape / annotation / form: v0.2
+        elif kind == "shape":
+            _render_shape_layer(page, layer)
+        # annotation / form: v0.2
 
 
 def _render_text_layer(
@@ -170,6 +184,47 @@ def _render_text_layer(
                 color=color,
                 fontname=value,
             )
+
+
+def _render_shape_layer(page: pymupdf.Page, layer: dict[str, Any]) -> None:
+    """v0.1 shape rendering: solid-fill rectangles only.
+    Curves, paths, gradients, and patterns land in v0.2."""
+    geom = layer.get("geometry") or {}
+    if geom.get("kind") != "rect":
+        return
+    rect = pymupdf.Rect(
+        _length_to_pt(geom["x"]),
+        _length_to_pt(geom["y"]),
+        _length_to_pt(geom["x"]) + _length_to_pt(geom["w"]),
+        _length_to_pt(geom["y"]) + _length_to_pt(geom["h"]),
+    )
+
+    fill_color = None
+    fill = layer.get("fill")
+    if isinstance(fill, dict) and fill.get("kind") == "solid":
+        fill_color = _color_to_rgb(fill.get("color", {}))
+
+    stroke_color = None
+    stroke_width = 0.0
+    stroke = layer.get("stroke")
+    if isinstance(stroke, dict):
+        paint = stroke.get("paint") or {}
+        if paint.get("kind") == "solid":
+            stroke_color = _color_to_rgb(paint.get("color", {}))
+        sw = stroke.get("width")
+        if sw:
+            stroke_width = _length_to_pt(sw)
+
+    if fill_color is None and stroke_color is None:
+        return
+
+    page.draw_rect(
+        rect,
+        color=stroke_color,
+        fill=fill_color,
+        width=stroke_width,
+        fill_opacity=float(layer.get("opacity", 1)),
+    )
 
 
 def _render_image_layer(

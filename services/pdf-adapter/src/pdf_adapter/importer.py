@@ -233,12 +233,86 @@ def _page_to_udm(
                 }
             )
 
+    # Vector drawings — filled/stroked rectangles capture page backgrounds and
+    # column dividers that Canva and other design tools rely on. v0.1 captures
+    # only rect ops with solid fills/strokes; curves, lines, and gradients
+    # land in v0.2.
+    layers.extend(_shape_layers_from_drawings(page))
+
     return {
         "number": number,
         "width": _length(page.rect.width, "pt"),
         "height": _length(page.rect.height, "pt"),
         "layers": layers,
     }
+
+
+def _shape_layers_from_drawings(page: pymupdf.Page) -> list[dict[str, Any]]:
+    """Convert page.get_drawings() output into UDM ShapeLayers.
+    Currently captures rectangles only; curves and lines are skipped."""
+    out: list[dict[str, Any]] = []
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return out
+
+    for d in drawings:
+        fill = d.get("fill")
+        stroke = d.get("color")
+        if fill is None and stroke is None:
+            continue
+        for item in d.get("items", []):
+            if not item or item[0] != "re":
+                continue
+            rect = item[1]
+            try:
+                w = float(rect.width)
+                h = float(rect.height)
+            except AttributeError:
+                continue
+            if w <= 0 or h <= 0:
+                continue
+            layer: dict[str, Any] = {
+                "type": "shape",
+                "geometry": {
+                    "kind": "rect",
+                    "x": _length(rect.x0, "pt"),
+                    "y": _length(rect.y0, "pt"),
+                    "w": _length(w, "pt"),
+                    "h": _length(h, "pt"),
+                },
+            }
+            if fill is not None:
+                layer["fill"] = {
+                    "kind": "solid",
+                    "color": {"literal": _color_tuple_to_value(fill)},
+                }
+            stroke_width = float(d.get("width") or 0)
+            if stroke is not None and stroke_width > 0:
+                layer["stroke"] = {
+                    "paint": {
+                        "kind": "solid",
+                        "color": {"literal": _color_tuple_to_value(stroke)},
+                    },
+                    "width": _length(stroke_width, "pt"),
+                }
+            opacity = d.get("fill_opacity")
+            if opacity is not None and 0 <= float(opacity) < 1:
+                layer["opacity"] = float(opacity)
+            out.append(layer)
+    return out
+
+
+def _color_tuple_to_value(c: Any) -> dict[str, Any]:
+    """Convert PyMuPDF's RGB color tuple (0..1 floats) to a UDM ColorValue."""
+    if isinstance(c, (tuple, list)) and len(c) >= 3:
+        return {
+            "kind": "rgb",
+            "r": int(round(float(c[0]) * 255)),
+            "g": int(round(float(c[1]) * 255)),
+            "b": int(round(float(c[2]) * 255)),
+        }
+    return {"kind": "rgb", "r": 0, "g": 0, "b": 0}
 
 
 def _length(value: float, unit: str) -> dict[str, Any]:
