@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f8f7f4;
+  --fg: #1a1a1a;
+  --accent: #fcc46a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14151a;
+    --fg: #f1f1f1;
+    --accent: #fcc46a;
+  }
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+}
