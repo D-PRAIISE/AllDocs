@@ -13,7 +13,7 @@ export default function HomePage() {
           UDM v0.1.0 · spec: docs/UDM_SPEC.md · schema: proto/udm.schema.json
         </p>
       </header>
-      <UdmViewer src="/sample.udm.json" />
+      <UdmViewer src="/synthetic.udm.json" />
     </main>
   );
 }

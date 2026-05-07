@@ -1,12 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { type Document, type FixedContent, lengthToPx } from "@/lib/udm";
+import { type Document, type FixedContent, type Resources, lengthToPx } from "@/lib/udm";
 import { FixedPageView } from "./FixedPageView";
 
 interface UdmViewerProps {
   src: string;
+}
+
+/**
+ * Inject @font-face declarations for any font resource that has a data_ref
+ * (i.e. the importer extracted the embedded font to disk). Each face uses
+ * a unique `udm-<font_id>` family so it can't collide with system fonts.
+ */
+function FontFaceStyles({ resources }: { resources: Resources }) {
+  const css = useMemo(
+    () =>
+      resources.fonts
+        .filter((f) => f.data_ref)
+        .map(
+          (f) => `@font-face {
+  font-family: "udm-${f.id}";
+  src: url("${f.data_ref}");
+  font-weight: ${f.weight};
+  font-style: ${f.style};
+  font-display: swap;
+}`
+        )
+        .join("\n"),
+    [resources.fonts]
+  );
+  if (!css) return null;
+  return <style dangerouslySetInnerHTML={{ __html: css }} />;
 }
 
 export function UdmViewer({ src }: UdmViewerProps) {
@@ -45,6 +71,7 @@ export function UdmViewer({ src }: UdmViewerProps) {
 
   return (
     <div className="space-y-6">
+      <FontFaceStyles resources={doc.resources} />
       <DocumentSummary doc={doc} />
       <ContentRenderer doc={doc} scale={scale} onScaleChange={setScale} />
     </div>

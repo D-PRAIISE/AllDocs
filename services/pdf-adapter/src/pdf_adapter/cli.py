@@ -32,13 +32,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Print a one-line summary instead of the full document",
     )
+    parser.add_argument(
+        "--assets-dir",
+        type=Path,
+        default=None,
+        help="Extract images and fonts to this directory (creates images/ and fonts/ subdirs)",
+    )
+    parser.add_argument(
+        "--assets-url-prefix",
+        default="",
+        help="URL prefix prepended to extracted asset data_refs (e.g. /synthetic.assets)",
+    )
     args = parser.parse_args(argv)
 
     if not args.input.exists():
         print(f"error: input not found: {args.input}", file=sys.stderr)
         return 2
 
-    udm = import_pdf(args.input)
+    udm = import_pdf(
+        args.input,
+        assets_dir=args.assets_dir,
+        assets_url_prefix=args.assets_url_prefix,
+    )
 
     if args.summary:
         n_pages = len(udm["content"]["pages"])

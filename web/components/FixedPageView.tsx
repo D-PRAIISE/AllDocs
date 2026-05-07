@@ -130,13 +130,20 @@ function ImageLayerView({
   const w = lengthToPx(layer.width) * scale;
   const h = lengthToPx(layer.height) * scale;
 
-  // data_ref of "xref:N" is opaque — no URL for now. Render a placeholder.
-  const isFetchable = img?.data_ref?.startsWith("http") || img?.data_ref?.startsWith("/");
-  const src = isFetchable ? img?.data_ref : undefined;
+  // data_ref of "xref:N" is opaque (importer ran without asset extraction).
+  // Anything else is treated as a URL — relative refs resolve against the
+  // host page, absolute paths and http(s) work directly.
+  const ref = img?.data_ref ?? "";
+  const isOpaque = !ref || ref.startsWith("xref:");
+  const src = isOpaque ? undefined : ref;
 
   return (
     <div
-      className="absolute border border-dashed border-neutral-300 bg-neutral-100 text-xs text-neutral-400 flex items-center justify-center"
+      className={
+        src
+          ? "absolute"
+          : "absolute border border-dashed border-neutral-300 bg-neutral-100 text-xs text-neutral-400 flex items-center justify-center"
+      }
       style={{
         left: `${x}px`,
         top: `${y}px`,
@@ -148,7 +155,12 @@ function ImageLayerView({
     >
       {src ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={src} alt={img?.alt_text ?? ""} className="w-full h-full object-cover" />
+        <img
+          src={src}
+          alt={img?.alt_text ?? ""}
+          className="block w-full h-full"
+          style={{ objectFit: "fill" }}
+        />
       ) : (
         <span>image: {layer.image_id}</span>
       )}
@@ -167,7 +179,11 @@ function AnnotationLayerView({ layer: _layer }: { layer: AnnotationLayer }) {
 }
 
 function cssFontFamily(font: FontResource): string {
-  // Quote family names that contain spaces.
-  const f = font.family.includes(" ") ? `"${font.family}"` : font.family;
-  return `${f}, ui-sans-serif, system-ui, sans-serif`;
+  // Resolution order:
+  //   1. udm-<font_id>: matches the @font-face injected by FontFaceStyles
+  //      when the font has a data_ref (extracted from the source document).
+  //   2. The original family name (system or web font with that name).
+  //   3. Generic sans-serif fallback.
+  const family = font.family.includes(" ") ? `"${font.family}"` : font.family;
+  return `"udm-${font.id}", ${family}, ui-sans-serif, system-ui, sans-serif`;
 }

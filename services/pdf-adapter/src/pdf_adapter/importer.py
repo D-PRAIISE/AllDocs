@@ -10,6 +10,13 @@ Lessons baked in (memory/project_alldocs_pdf_adapter.md):
   2. Image placements can extend off-page; full transform is preserved.
   3. Multiple placements of the same image share one image_id.
   4. Background colors are NOT sampled; only structural layers are recorded.
+
+Asset extraction (optional):
+  If `assets_dir` is passed to import_pdf, embedded images and fonts are
+  written to disk and the corresponding `data_ref` values in the UDM
+  resources are rewritten as relative URLs (joined with `assets_url_prefix`).
+  This lets the web viewer load real image and font files without further
+  processing.
 """
 from __future__ import annotations
 
@@ -42,8 +49,19 @@ WEIGHT_NAMES: dict[str, int] = {
 }
 
 
-def import_pdf(path: str | Path) -> dict[str, Any]:
+def import_pdf(
+    path: str | Path,
+    assets_dir: str | Path | None = None,
+    assets_url_prefix: str = "",
+) -> dict[str, Any]:
     """Read a PDF file and produce a UDM v0.1.0 document.
+
+    If ``assets_dir`` is given, embedded images and fonts are extracted to
+    that directory under ``images/`` and ``fonts/``. Resource ``data_ref``
+    values in the returned UDM are rewritten as relative URLs of the form
+    ``{assets_url_prefix}/images/<id>.<ext>`` (or ``images/<id>.<ext>`` if
+    no prefix is given). When ``assets_dir`` is None, ``data_ref`` is left
+    as the opaque ``xref:N`` form.
 
     Returns a dict ready to be serialized as UDM JSON.
     """
@@ -84,7 +102,7 @@ def import_pdf(path: str | Path) -> dict[str, Any]:
         if native_meta.get("modDate"):
             metadata["modified_at"] = native_meta["modDate"]
 
-        return {
+        udm = {
             "udm_version": UDM_VERSION,
             "id": str(uuid.uuid4()),
             "mode": "fixed",
@@ -97,8 +115,64 @@ def import_pdf(path: str | Path) -> dict[str, Any]:
             },
             "content": {"pages": pages},
         }
+
+        if assets_dir is not None:
+            _extract_assets(udm, doc, Path(assets_dir), assets_url_prefix)
+
+        return udm
     finally:
         doc.close()
+
+
+def _extract_assets(
+    udm: dict[str, Any],
+    doc: pymupdf.Document,
+    assets_dir: Path,
+    url_prefix: str,
+) -> None:
+    """Extract images and fonts referenced by the UDM to disk and rewrite
+    resource ``data_ref`` values to relative URLs."""
+    images_dir = assets_dir / "images"
+    fonts_dir = assets_dir / "fonts"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    fonts_dir.mkdir(parents=True, exist_ok=True)
+
+    prefix = url_prefix.rstrip("/")
+
+    def join(*parts: str) -> str:
+        return "/".join(p for p in parts if p)
+
+    for img in udm["resources"]["images"]:
+        ref = img.get("data_ref", "")
+        if not ref.startswith("xref:"):
+            continue
+        try:
+            xref = int(ref.removeprefix("xref:"))
+        except ValueError:
+            continue
+        info = doc.extract_image(xref)
+        ext = info["ext"]
+        filename = f"{img['id']}.{ext}"
+        (images_dir / filename).write_bytes(info["image"])
+        img["data_ref"] = join(prefix, "images", filename)
+
+    for font in udm["resources"]["fonts"]:
+        meta = font.get("_meta") or {}
+        xref = meta.get("xref")
+        if not xref:
+            continue
+        try:
+            info = doc.extract_font(xref)
+        except (RuntimeError, ValueError):
+            continue
+        if not info or len(info) < 4:
+            continue
+        ext, content = info[1], info[3]
+        if not content:
+            continue
+        filename = f"{font['id']}.{ext or 'bin'}"
+        (fonts_dir / filename).write_bytes(content)
+        font["data_ref"] = join(prefix, "fonts", filename)
 
 
 def _page_to_udm(
@@ -110,14 +184,16 @@ def _page_to_udm(
 ) -> dict[str, Any]:
     layers: list[dict[str, Any]] = []
 
-    # Build a clean-name -> prefixed-basefont map from the page's font table.
-    # span["font"] returns the base name with the subset prefix stripped, so we
-    # can't detect subsetting from the span alone; this map gives us the truth.
-    span_to_basefont: dict[str, str] = {}
+    # Build a clean-name -> (prefixed_basefont, xref) map from the page's
+    # font table. span["font"] returns the base name with the subset prefix
+    # stripped, so we can't detect subsetting from the span alone; this map
+    # gives us the truth (and the xref for asset extraction).
+    span_to_font_info: dict[str, tuple[str, int]] = {}
     for entry in page.get_fonts(full=True):
+        xref = entry[0]
         basefont = entry[3]
         cleaned = basefont.split("+", 1)[-1] if _looks_like_subset(basefont) else basefont
-        span_to_basefont.setdefault(cleaned, basefont)
+        span_to_font_info.setdefault(cleaned, (basefont, xref))
 
     text_runs: list[dict[str, Any]] = []
     for block in page.get_text("dict").get("blocks", []):
@@ -128,11 +204,11 @@ def _page_to_udm(
                 if not span.get("text"):
                     continue
                 # Use the prefixed basefont if known so subset detection works.
-                font_key = span_to_basefont.get(span["font"], span["font"])
+                basefont, font_xref = span_to_font_info.get(span["font"], (span["font"], 0))
                 text_runs.append(
                     {
                         "text": span["text"],
-                        "font_id": _ensure_font(fonts, font_key),
+                        "font_id": _ensure_font(fonts, basefont, font_xref),
                         "font_size": _length(span["size"], "pt"),
                         "color": {"literal": _color_int_to_value(span["color"])},
                         "x": _length(span["bbox"][0], "pt"),
@@ -187,7 +263,7 @@ def _looks_like_subset(basefont: str) -> bool:
     return len(prefix) == 6 and prefix.isalpha() and prefix.isupper()
 
 
-def _ensure_font(fonts: dict[str, dict[str, Any]], basefont: str) -> str:
+def _ensure_font(fonts: dict[str, dict[str, Any]], basefont: str, xref: int = 0) -> str:
     if basefont in fonts:
         return fonts[basefont]["id"]
 
@@ -220,7 +296,7 @@ def _ensure_font(fonts: dict[str, dict[str, Any]], basefont: str) -> str:
         "weight": weight,
         "style": style,
         "source": "embedded" if is_subset else "system",
-        "_meta": {"subset": is_subset, "original_basefont": basefont},
+        "_meta": {"subset": is_subset, "original_basefont": basefont, "xref": xref},
     }
     return font_id
 
