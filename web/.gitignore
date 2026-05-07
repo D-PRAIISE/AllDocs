@@ -20,3 +20,7 @@ node_modules/
 # Generated
 next-env.d.ts
 *.tsbuildinfo
+
+# User uploads from /api/import — local dev only.
+# Production deploy should use ephemeral object storage instead.
+public/uploads/
