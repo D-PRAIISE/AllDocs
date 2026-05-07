@@ -94,6 +94,9 @@ next-env.d.ts
 tests/fixtures/private/
 tests/fixtures/**/private/
 
+# Round-trip test output — regeneratable via `python tests/round_trip.py`.
+tests/fixtures/round_trip_output/
+
 # --- Generated artifacts ---
 proto/generated/
 **/__generated__/

@@ -1,4 +1,11 @@
-"""CLI entry point: `pdf-adapter input.pdf -o output.udm.json`."""
+"""CLI entry point.
+
+Import (default):
+    pdf-adapter input.pdf -o output.udm.json [--assets-dir DIR --assets-url-prefix URL]
+
+Export:
+    pdf-adapter --export input.udm.json -o output.pdf
+"""
 from __future__ import annotations
 
 import argparse
@@ -6,13 +13,14 @@ import json
 import sys
 from pathlib import Path
 
+from .exporter import export_pdf_from_file
 from .importer import import_pdf
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="pdf-adapter",
-        description="Convert a PDF to UDM v0.1 JSON.",
+        description="Convert between PDF and UDM v0.1 JSON.",
     )
     parser.add_argument("input", type=Path, help="Path to input PDF file")
     parser.add_argument(
@@ -36,18 +44,32 @@ def main(argv: list[str] | None = None) -> int:
         "--assets-dir",
         type=Path,
         default=None,
-        help="Extract images and fonts to this directory (creates images/ and fonts/ subdirs)",
+        help="Import: extract images and fonts to this directory (creates images/ and fonts/ subdirs)",
     )
     parser.add_argument(
         "--assets-url-prefix",
         default="",
-        help="URL prefix prepended to extracted asset data_refs (e.g. /synthetic.assets)",
+        help="Import: URL prefix prepended to extracted asset data_refs (e.g. /synthetic.assets)",
+    )
+    parser.add_argument(
+        "--export",
+        action="store_true",
+        help="Export mode: input is a UDM JSON, output is a PDF",
     )
     args = parser.parse_args(argv)
 
     if not args.input.exists():
         print(f"error: input not found: {args.input}", file=sys.stderr)
         return 2
+
+    if args.export:
+        if not args.output:
+            print("error: --export requires -o OUTPUT", file=sys.stderr)
+            return 2
+        export_pdf_from_file(args.input, args.output)
+        size = args.output.stat().st_size
+        print(f"Exported {args.output} ({size} bytes)", file=sys.stderr)
+        return 0
 
     udm = import_pdf(
         args.input,
