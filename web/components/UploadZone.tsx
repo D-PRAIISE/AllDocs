@@ -7,8 +7,12 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
+  format: "pdf" | "docx";
   ms_taken: number;
 }
+
+const ACCEPT = ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const ALLOWED_EXTS = [".pdf", ".docx"];
 
 interface UploadZoneProps {
   onUploaded: (result: UploadResult) => void;
@@ -50,8 +54,10 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
     (files: FileList | null) => {
       if (!files || files.length === 0) return;
       const file = files[0];
-      if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
-        setError("PDF files only (for now)");
+      const lower = file.name.toLowerCase();
+      const ok = ALLOWED_EXTS.some((ext) => lower.endsWith(ext));
+      if (!ok) {
+        setError("Supported: PDF and DOCX");
         return;
       }
       void upload(file);
@@ -96,16 +102,11 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
         </div>
       ) : (
         <>
-          <div className="text-neutral-700 font-medium">Drop a PDF here</div>
+          <div className="text-neutral-700 font-medium">Drop a PDF or DOCX here</div>
           <div className="text-xs text-neutral-400 my-2">or</div>
           <label className="inline-block px-4 py-2 bg-neutral-900 text-white rounded cursor-pointer hover:bg-neutral-700 text-sm">
             Choose file
-            <input
-              type="file"
-              accept=".pdf,application/pdf"
-              className="hidden"
-              onChange={onChange}
-            />
+            <input type="file" accept={ACCEPT} className="hidden" onChange={onChange} />
           </label>
           {progress && !error && (
             <div className="mt-3 text-xs text-emerald-700">{progress}</div>

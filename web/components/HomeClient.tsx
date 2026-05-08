@@ -10,6 +10,7 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
+  format: "pdf" | "docx";
   ms_taken: number;
 }
 
@@ -32,8 +33,8 @@ export function HomeClient() {
       <div className="flex flex-wrap items-center gap-3 text-xs">
         {meta ? (
           <span className="text-neutral-500 font-mono">
-            Loaded: {meta.filename} · {(meta.size / 1024).toFixed(1)} KB · imported in{" "}
-            {meta.ms_taken} ms · session{" "}
+            Loaded: {meta.filename} · {meta.format.toUpperCase()} ·{" "}
+            {(meta.size / 1024).toFixed(1)} KB · imported in {meta.ms_taken} ms · session{" "}
             <span className="text-neutral-400">{meta.session_id.slice(0, 8)}</span>
           </span>
         ) : (
@@ -41,13 +42,15 @@ export function HomeClient() {
             Showing built-in synthetic fixture.
           </span>
         )}
-        <a
-          href={exportUrl}
-          download
-          className="inline-block px-3 py-1.5 bg-amber-500 text-neutral-900 rounded text-sm font-medium hover:bg-amber-400 transition"
-        >
-          Download as PDF
-        </a>
+        {(!meta || meta.format === "pdf") && (
+          <a
+            href={exportUrl}
+            download
+            className="inline-block px-3 py-1.5 bg-amber-500 text-neutral-900 rounded text-sm font-medium hover:bg-amber-400 transition"
+          >
+            Download as PDF
+          </a>
+        )}
         {meta && (
           <button
             onClick={() => {

@@ -1,9 +1,9 @@
 /**
  * POST /api/import
  *
- * Accepts a multipart/form-data upload with a PDF in the `file` field,
- * runs the Python pdf-adapter as a subprocess, and returns a URL to the
- * generated UDM JSON document.
+ * Accepts a multipart/form-data upload with a PDF or DOCX file in the
+ * `file` field, dispatches to the matching Python adapter as a subprocess,
+ * and returns a URL to the generated UDM JSON document.
  *
  * Files are stored under web/public/uploads/<session_id>/ so they're
  * directly servable by Next.js. This is fine for local development;
@@ -23,17 +23,53 @@ export const dynamic = "force-dynamic";
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
 const SUBPROCESS_TIMEOUT_MS = 45_000;
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
+const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // PK\3\4 (DOCX/ODT/XLSX/PPTX)
 
-// Resolved at request time so cwd changes don't matter.
+type Format = "pdf" | "docx";
+
+interface AdapterSpec {
+  format: Format;
+  module: string;
+  pythonPathSubdir: string;
+  // PDF supports asset extraction; DOCX doesn't yet (v0.2).
+  extractsAssets: boolean;
+}
+
+const ADAPTERS: Record<Format, AdapterSpec> = {
+  pdf: {
+    format: "pdf",
+    module: "pdf_adapter.cli",
+    pythonPathSubdir: "pdf-adapter/src",
+    extractsAssets: true,
+  },
+  docx: {
+    format: "docx",
+    module: "office_adapter.cli",
+    pythonPathSubdir: "office-adapter/src",
+    extractsAssets: false,
+  },
+};
+
 function paths() {
   const webRoot = process.cwd();
   const repoRoot = resolve(webRoot, "..");
   return {
     webRoot,
     repoRoot,
-    pythonPath: resolve(repoRoot, "services", "pdf-adapter", "src"),
+    servicesRoot: resolve(repoRoot, "services"),
     publicUploads: resolve(webRoot, "public", "uploads"),
   };
+}
+
+function detectFormat(buf: Buffer, filename: string): Format | null {
+  const ext = filename.toLowerCase().split(".").pop() ?? "";
+  if (ext === "pdf" && buf.length >= 4 && buf.subarray(0, 4).equals(PDF_MAGIC)) {
+    return "pdf";
+  }
+  if (ext === "docx" && buf.length >= 4 && buf.subarray(0, 4).equals(ZIP_MAGIC)) {
+    return "docx";
+  }
+  return null;
 }
 
 interface ImportResponse {
@@ -67,25 +103,31 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
     );
   }
   const buf = Buffer.from(await file.arrayBuffer());
-  if (buf.length < 4 || !buf.subarray(0, 4).equals(PDF_MAGIC)) {
-    return NextResponse.json({ error: "Not a PDF (missing %PDF header)" }, { status: 415 });
+  const format = detectFormat(buf, file.name);
+  if (format === null) {
+    return NextResponse.json(
+      { error: "Unsupported file type — PDF or DOCX only (matched by extension + magic bytes)" },
+      { status: 415 }
+    );
   }
+  const adapter = ADAPTERS[format];
 
   const sessionId = randomUUID();
-  const { pythonPath, publicUploads } = paths();
+  const { servicesRoot, publicUploads } = paths();
   const sessionDir = join(publicUploads, sessionId);
   await mkdir(sessionDir, { recursive: true });
 
-  const pdfPath = join(sessionDir, "source.pdf");
+  const sourcePath = join(sessionDir, `source.${format}`);
   const udmPath = join(sessionDir, "doc.udm.json");
   const assetsDir = join(sessionDir, "assets");
   const urlPrefix = `/uploads/${sessionId}/assets`;
+  const pythonPath = resolve(servicesRoot, adapter.pythonPathSubdir);
 
-  await writeFile(pdfPath, buf);
+  await writeFile(sourcePath, buf);
 
   const started = Date.now();
   try {
-    await runImporter(pdfPath, udmPath, assetsDir, urlPrefix, pythonPath);
+    await runImporter(adapter, sourcePath, udmPath, assetsDir, urlPrefix, pythonPath);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: `Importer failed: ${msg}` }, { status: 500 });
@@ -97,11 +139,13 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
     udm_url: `/uploads/${sessionId}/doc.udm.json`,
     filename: file.name,
     size: file.size,
+    format,
     ms_taken: ms,
   });
 }
 
 function runImporter(
+  adapter: AdapterSpec,
   input: string,
   output: string,
   assetsDir: string,
@@ -110,21 +154,11 @@ function runImporter(
 ): Promise<void> {
   return new Promise((resolve_, reject) => {
     const env = { ...process.env, PYTHONPATH: pythonPath };
-    const proc = spawn(
-      "python",
-      [
-        "-m",
-        "pdf_adapter.cli",
-        input,
-        "-o",
-        output,
-        "--assets-dir",
-        assetsDir,
-        "--assets-url-prefix",
-        urlPrefix,
-      ],
-      { env, windowsHide: true }
-    );
+    const cliArgs = ["-m", adapter.module, input, "-o", output];
+    if (adapter.extractsAssets) {
+      cliArgs.push("--assets-dir", assetsDir, "--assets-url-prefix", urlPrefix);
+    }
+    const proc = spawn("python", cliArgs, { env, windowsHide: true });
 
     let stderr = "";
     proc.stderr.on("data", (chunk: Buffer) => {

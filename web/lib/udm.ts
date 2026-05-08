@@ -184,11 +184,140 @@ export interface FormLayer {
   fields: unknown[];
 }
 
-// ----- Other modes (stubbed for v0.1 viewer) -----
+// ----- Content: Flow mode -----
 
 export interface FlowContent {
-  blocks: unknown[];
+  blocks: Block[];
 }
+
+export type Block =
+  | ParagraphBlock
+  | HeadingBlock
+  | ListBlock
+  | TableBlock
+  | CodeBlock
+  | QuoteBlock
+  | DividerBlock
+  | ImageBlock;
+
+export interface ParagraphBlock {
+  type: "paragraph";
+  style_id?: string;
+  inlines: Inline[];
+}
+
+export interface HeadingBlock {
+  type: "heading";
+  level: 1 | 2 | 3 | 4 | 5 | 6;
+  style_id?: string;
+  inlines: Inline[];
+}
+
+export interface ListBlock {
+  type: "list";
+  ordered: boolean;
+  start?: number;
+  style_id?: string;
+  items: ListItem[];
+}
+
+export interface ListItem {
+  blocks: Block[];
+}
+
+export interface TableBlock {
+  type: "table";
+  rows: TableRow[];
+  column_widths?: Length[];
+  style_id?: string;
+  caption?: Inline[];
+}
+
+export interface TableRow {
+  cells: TableCell[];
+  is_header?: boolean;
+}
+
+export interface TableCell {
+  blocks: Block[];
+  colspan?: number;
+  rowspan?: number;
+  style_id?: string;
+}
+
+export interface CodeBlock {
+  type: "code";
+  language?: string;
+  content: string;
+}
+
+export interface QuoteBlock {
+  type: "quote";
+  blocks: Block[];
+  citation?: Inline[];
+}
+
+export interface DividerBlock {
+  type: "divider";
+}
+
+export interface ImageBlock {
+  type: "image";
+  image_id: string;
+  caption?: Inline[];
+  width?: Length;
+  height?: Length;
+  alignment?: "left" | "center" | "right" | "inline";
+}
+
+export type Inline = TextInline | BrInline | InlineImageInline | LinkInline | MathInline;
+
+export interface TextInline {
+  type: "text";
+  text: string;
+  style_id?: string;
+  marks?: Mark[];
+}
+
+export interface BrInline {
+  type: "br";
+  hard?: boolean;
+}
+
+export interface InlineImageInline {
+  type: "image_inline";
+  image_id: string;
+  width?: Length;
+  height?: Length;
+}
+
+export interface LinkInline {
+  type: "link";
+  href: string;
+  title?: string;
+  inlines: Inline[];
+}
+
+export interface MathInline {
+  type: "math";
+  source: { mathml?: string; latex?: string };
+}
+
+export type Mark =
+  | { type: "bold" }
+  | { type: "italic" }
+  | { type: "underline" }
+  | { type: "strikethrough" }
+  | { type: "superscript" }
+  | { type: "subscript" }
+  | { type: "code" }
+  | { type: "color"; color: ColorRef }
+  | { type: "highlight"; color: ColorRef }
+  | { type: "font"; font_id: string }
+  | { type: "size"; size: Length };
+
+// ----- Other modes (stubbed for v0.1 viewer) -----
+
 export interface SheetContent {
   sheets: unknown[];
 }

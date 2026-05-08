@@ -2,8 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { type Document, type FixedContent, type Resources, lengthToPx } from "@/lib/udm";
+import {
+  type Document,
+  type FixedContent,
+  type FlowContent,
+  type Resources,
+  lengthToPx,
+} from "@/lib/udm";
 import { FixedPageView } from "./FixedPageView";
+import { FlowContentView } from "./FlowContentView";
 
 interface UdmViewerProps {
   src: string;
@@ -114,29 +121,35 @@ function ContentRenderer({
   scale: number;
   onScaleChange: (s: number) => void;
 }) {
-  if (doc.mode !== "fixed") {
+  if (doc.mode === "fixed") {
+    const fixed = doc.content as FixedContent;
     return (
-      <div className="p-6 text-neutral-500 bg-white rounded border border-neutral-200">
-        Mode <code className="font-mono">{doc.mode}</code> not yet supported in this viewer (v0.1
-        renders fixed-mode only).
+      <div>
+        <ScaleControl scale={scale} onScaleChange={onScaleChange} />
+        <div className="space-y-8 flex flex-col items-center">
+          {fixed.pages.map((page) => (
+            <div key={page.number} className="text-xs text-neutral-500">
+              <div className="mb-1">
+                page {page.number} · {Math.round(lengthToPx(page.width))}×
+                {Math.round(lengthToPx(page.height))} px
+              </div>
+              <FixedPageView page={page} resources={doc.resources} scale={scale} />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
-  const fixed = doc.content as FixedContent;
+
+  if (doc.mode === "flow") {
+    const flow = doc.content as FlowContent;
+    return <FlowContentView blocks={flow.blocks} resources={doc.resources} />;
+  }
+
   return (
-    <div>
-      <ScaleControl scale={scale} onScaleChange={onScaleChange} />
-      <div className="space-y-8 flex flex-col items-center">
-        {fixed.pages.map((page) => (
-          <div key={page.number} className="text-xs text-neutral-500">
-            <div className="mb-1">
-              page {page.number} · {Math.round(lengthToPx(page.width))}×
-              {Math.round(lengthToPx(page.height))} px
-            </div>
-            <FixedPageView page={page} resources={doc.resources} scale={scale} />
-          </div>
-        ))}
-      </div>
+    <div className="p-6 text-neutral-500 bg-white rounded border border-neutral-200">
+      Mode <code className="font-mono">{doc.mode}</code> not yet supported in this viewer
+      (v0.1 renders fixed and flow only).
     </div>
   );
 }
