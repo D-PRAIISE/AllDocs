@@ -84,36 +84,48 @@ export function HomeClient() {
     setIsEditing(false);
   }, [doc]);
 
-  const handleDownloadPdf = useCallback(async () => {
-    if (!doc) return;
-    setIsDownloading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/export", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ udm: doc }),
-      });
-      if (!res.ok) {
-        const j = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(j?.error ?? `HTTP ${res.status}`);
+  const downloadExport = useCallback(
+    async (endpoint: "/api/export" | "/api/export-docx", ext: "pdf" | "docx") => {
+      if (!doc) return;
+      setIsDownloading(true);
+      setError(null);
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ udm: doc }),
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => null)) as { error?: string } | null;
+          throw new Error(j?.error ?? `HTTP ${res.status}`);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const base = (meta?.filename ?? "document").replace(/\.[a-z0-9]+$/i, "");
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${base}.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setIsDownloading(false);
       }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const filename = (meta?.filename ?? "document").replace(/\.[a-z0-9]+$/i, "") + ".pdf";
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setIsDownloading(false);
-    }
-  }, [doc, meta]);
+    },
+    [doc, meta]
+  );
+
+  const handleDownloadPdf = useCallback(
+    () => downloadExport("/api/export", "pdf"),
+    [downloadExport]
+  );
+  const handleDownloadDocx = useCallback(
+    () => downloadExport("/api/export-docx", "docx"),
+    [downloadExport]
+  );
 
   const resetToSynthetic = useCallback(() => {
     setSrc(DEFAULT_SRC);
@@ -175,13 +187,24 @@ export function HomeClient() {
         )}
 
         {showDownload && !isEditing && (
-          <button
-            onClick={handleDownloadPdf}
-            disabled={isDownloading}
-            className="px-3 py-1.5 bg-amber-500 text-neutral-900 rounded text-sm font-medium hover:bg-amber-400 transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isDownloading ? "Exporting..." : "Download as PDF"}
-          </button>
+          <>
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isDownloading}
+              className="px-3 py-1.5 bg-amber-500 text-neutral-900 rounded text-sm font-medium hover:bg-amber-400 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isDownloading ? "Exporting..." : "Download as PDF"}
+            </button>
+            {doc.mode === "flow" && (
+              <button
+                onClick={handleDownloadDocx}
+                disabled={isDownloading}
+                className="px-3 py-1.5 bg-white text-neutral-700 border border-neutral-300 rounded text-sm font-medium hover:border-neutral-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Download as DOCX
+              </button>
+            )}
+          </>
         )}
 
         {meta && (
