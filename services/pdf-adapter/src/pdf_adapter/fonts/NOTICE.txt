@@ -1,0 +1,19 @@
+Bundled font files in this directory ship with the pdf-adapter package
+as fallback fonts for the PDF exporter. They are not authored by the
+AllDocs project; they are redistributed verbatim under their original
+license.
+
+  Arimo, Tinos, Cousine
+    Copyright (c) 2010-2013 Ascender Corporation; Steve Matteson, designer.
+    Licensed under the Apache License, Version 2.0.
+    See https://www.apache.org/licenses/LICENSE-2.0 for the full text.
+    Source: Google Fonts (https://fonts.google.com).
+
+Each TTF here is the Latin-only subset published by the fontsource
+project (https://fontsource.org) under the same Apache 2.0 license.
+
+These fonts are metric-compatible with the common Microsoft fonts they
+replace (Arimo↔Arial, Tinos↔Times New Roman, Cousine↔Courier New) — the
+same property Liberation Sans/Serif/Mono target. They are used in
+preference to PDF base-14 stock fonts when an extracted subset from a
+source PDF can't be reused.

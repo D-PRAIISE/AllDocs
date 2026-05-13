@@ -27,6 +27,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/pdf_adapter"]
 
+# Bundle the Apache-2.0 fallback fonts (Arimo / Tinos / Cousine) with the
+# wheel so installs are self-contained. See src/pdf_adapter/fonts/NOTICE.txt.
+[tool.hatch.build.targets.wheel.force-include]
+"src/pdf_adapter/fonts" = "pdf_adapter/fonts"
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

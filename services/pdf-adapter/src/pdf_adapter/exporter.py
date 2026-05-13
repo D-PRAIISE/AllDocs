@@ -80,15 +80,39 @@ def _resolve_fonts(
     fonts: list[dict[str, Any]],
     base: Path,
 ) -> dict[str, FontHandle]:
+    """Three-tier font resolution:
+
+      1. The font extracted from the source PDF, if it has a usable
+         Unicode cmap (probed via has_glyph on a Latin sample).
+      2. A bundled metric-compatible fallback (Arimo/Tinos/Cousine).
+         These are *much* closer to the original visual metrics than
+         the base-14 stock fonts because they were designed to be
+         metric-equivalent with Arial/Times/Courier.
+      3. PDF base-14 stock font (Helvetica/Times/Courier).
+
+    See PDF-adapter lesson #13.
+    """
+    from ._fonts import resolve_fallback
+
     handles: dict[str, FontHandle] = {}
     for font in fonts:
         font_id = font["id"]
+
+        # Tier 1: try the extracted subset.
         data_ref = font.get("data_ref")
         if data_ref and not data_ref.startswith(("http://", "https://", "xref:")):
             font_path = _resolve_relative(base, data_ref)
             if font_path.exists() and _font_usable_for_unicode(font_path):
                 handles[font_id] = ("file", str(font_path))
                 continue
+
+        # Tier 2: try the bundled metric-compatible family.
+        bundled = resolve_fallback(font.get("family", ""), font.get("weight", 400), font.get("style", "normal"))
+        if bundled is not None and _font_usable_for_unicode(bundled):
+            handles[font_id] = ("file", str(bundled))
+            continue
+
+        # Tier 3: PDF base-14 stock font.
         handles[font_id] = ("base14", _base14_for(font))
     return handles
 
