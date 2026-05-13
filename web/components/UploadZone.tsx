@@ -11,12 +11,13 @@ interface UploadResult {
   ms_taken: number;
 }
 
-const ACCEPT = ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const ALLOWED_EXTS = [".pdf", ".docx"];
-
 interface UploadZoneProps {
   onUploaded: (result: UploadResult) => void;
 }
+
+const ACCEPT =
+  ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const ALLOWED_EXTS = [".pdf", ".docx"];
 
 export function UploadZone({ onUploaded }: UploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
@@ -27,7 +28,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
   const upload = useCallback(
     async (file: File) => {
       setError(null);
-      setProgress(`Uploading ${file.name} (${formatBytes(file.size)})...`);
+      setProgress(`uploading ${file.name} (${formatBytes(file.size)})`);
       setIsUploading(true);
       try {
         const formData = new FormData();
@@ -38,7 +39,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           throw new Error(j?.error ?? `HTTP ${res.status}`);
         }
         const result = (await res.json()) as UploadResult;
-        setProgress(`Imported in ${result.ms_taken} ms`);
+        setProgress(`imported in ${result.ms_taken}ms`);
         onUploaded(result);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -55,9 +56,8 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       if (!files || files.length === 0) return;
       const file = files[0];
       const lower = file.name.toLowerCase();
-      const ok = ALLOWED_EXTS.some((ext) => lower.endsWith(ext));
-      if (!ok) {
-        setError("Supported: PDF and DOCX");
+      if (!ALLOWED_EXTS.some((ext) => lower.endsWith(ext))) {
+        setError("supported formats: pdf, docx");
         return;
       }
       void upload(file);
@@ -80,7 +80,6 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
     setIsDragging(false);
     onFiles(e.dataTransfer.files);
   };
-
   const onChange = (e: ChangeEvent<HTMLInputElement>) => onFiles(e.target.files);
 
   return (
@@ -89,37 +88,46 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`rounded-lg border-2 border-dashed p-8 text-center transition-colors ${
+      className={`border border-dashed p-10 text-center transition-colors ${
         isDragging
-          ? "border-amber-500 bg-amber-50"
-          : "border-neutral-300 bg-white hover:border-neutral-400"
+          ? "border-accent bg-accent/5"
+          : isUploading
+            ? "border-border bg-surface"
+            : "border-border-strong bg-surface hover:border-fg"
       }`}
     >
       {isUploading ? (
-        <div className="text-neutral-700">
-          <div className="font-medium">Importing...</div>
-          {progress && <div className="text-xs text-neutral-500 mt-1">{progress}</div>}
+        <div className="space-y-2">
+          <div className="font-mono text-xs uppercase tracking-wider text-accent">
+            importing…
+          </div>
+          {progress && <div className="font-mono text-xs text-muted">{progress}</div>}
         </div>
       ) : (
-        <>
-          <div className="text-neutral-700 font-medium">Drop a PDF or DOCX here</div>
-          <div className="text-xs text-neutral-400 my-2">or</div>
-          <label className="inline-block px-4 py-2 bg-neutral-900 text-white rounded cursor-pointer hover:bg-neutral-700 text-sm">
-            Choose file
+        <div className="space-y-3">
+          <div className="font-mono text-xs uppercase tracking-wider text-muted">
+            drop a file
+          </div>
+          <div className="font-sans text-lg text-fg">PDF or DOCX</div>
+          <div className="font-mono text-[0.65rem] text-subtle">or</div>
+          <label className="btn-primary inline-flex cursor-pointer">
+            choose file
             <input type="file" accept={ACCEPT} className="hidden" onChange={onChange} />
           </label>
           {progress && !error && (
-            <div className="mt-3 text-xs text-emerald-700">{progress}</div>
+            <div className="font-mono text-xs text-success pt-2">{progress}</div>
           )}
-          {error && <div className="mt-3 text-sm text-red-700">{error}</div>}
-        </>
+          {error && (
+            <div className="font-mono text-xs text-error pt-2">{error}</div>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
 function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
+  return `${(n / 1024 / 1024).toFixed(1)}MB`;
 }

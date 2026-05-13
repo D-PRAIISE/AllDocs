@@ -22,7 +22,7 @@ export function FlowEditor({ initialBlocks, onChange }: FlowEditorProps) {
     editorProps: {
       attributes: {
         class:
-          "prose prose-neutral max-w-none min-h-[400px] focus:outline-none [&_h1]:text-3xl [&_h1]:font-bold [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:text-xl [&_h3]:font-semibold [&_p]:my-3 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_blockquote]:border-l-4 [&_blockquote]:border-neutral-300 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-neutral-600 [&_pre]:bg-neutral-100 [&_pre]:rounded [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-sm",
+          "min-h-[400px] focus:outline-none text-fg [&_h1]:text-3xl [&_h1]:font-bold [&_h1]:mb-4 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-6 [&_h2]:mb-3 [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-4 [&_h3]:mb-2 [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1 [&_blockquote]:border-l-2 [&_blockquote]:border-accent [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-muted [&_blockquote]:my-4 [&_pre]:bg-bg [&_pre]:border [&_pre]:border-border [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-sm [&_pre]:text-code [&_pre]:overflow-x-auto [&_hr]:border-border [&_hr]:my-6",
       },
     },
     onUpdate: ({ editor: ed }) => {
@@ -44,13 +44,17 @@ export function FlowEditor({ initialBlocks, onChange }: FlowEditorProps) {
   }, [editor, initialBlocks]);
 
   if (!editor) {
-    return <div className="p-6 text-neutral-500">Loading editor...</div>;
+    return (
+      <div className="border border-border bg-surface px-4 py-12 text-center font-mono text-xs uppercase tracking-wider text-muted">
+        loading editor…
+      </div>
+    );
   }
 
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white">
+    <div className="border border-border bg-surface">
       <Toolbar editor={editor} />
-      <div className="p-8">
+      <div className="p-10">
         <EditorContent editor={editor} />
       </div>
     </div>
@@ -59,34 +63,34 @@ export function FlowEditor({ initialBlocks, onChange }: FlowEditorProps) {
 
 function Toolbar({ editor }: { editor: Editor }) {
   return (
-    <div className="flex flex-wrap items-center gap-1 border-b border-neutral-200 bg-neutral-50 px-3 py-2 sticky top-0 z-10 rounded-t-lg">
+    <div className="flex flex-wrap items-center gap-px border-b border-border bg-elevated px-3 py-2 sticky top-0 z-10">
       <ToolBtn
         onClick={() => editor.chain().focus().toggleBold().run()}
         active={editor.isActive("bold")}
         title="Bold (Ctrl+B)"
       >
-        <strong>B</strong>
+        B
       </ToolBtn>
       <ToolBtn
         onClick={() => editor.chain().focus().toggleItalic().run()}
         active={editor.isActive("italic")}
         title="Italic (Ctrl+I)"
       >
-        <em>I</em>
+        I
       </ToolBtn>
       <ToolBtn
         onClick={() => editor.chain().focus().toggleUnderline().run()}
         active={editor.isActive("underline")}
         title="Underline (Ctrl+U)"
       >
-        <u>U</u>
+        U
       </ToolBtn>
       <ToolBtn
         onClick={() => editor.chain().focus().toggleStrike().run()}
         active={editor.isActive("strike")}
         title="Strikethrough"
       >
-        <s>S</s>
+        S
       </ToolBtn>
       <Sep />
       <ToolBtn
@@ -116,34 +120,34 @@ function Toolbar({ editor }: { editor: Editor }) {
         active={editor.isActive("bulletList")}
         title="Bullet list"
       >
-        •
+        UL
       </ToolBtn>
       <ToolBtn
         onClick={() => editor.chain().focus().toggleOrderedList().run()}
         active={editor.isActive("orderedList")}
         title="Numbered list"
       >
-        1.
+        OL
       </ToolBtn>
       <ToolBtn
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
         active={editor.isActive("blockquote")}
         title="Quote"
       >
-        ❝
+        &quot;
       </ToolBtn>
       <ToolBtn
         onClick={() => editor.chain().focus().toggleCodeBlock().run()}
         active={editor.isActive("codeBlock")}
         title="Code block"
       >
-        {"</>"}
+        &lt;/&gt;
       </ToolBtn>
       <ToolBtn
         onClick={() => editor.chain().focus().setHorizontalRule().run()}
         title="Horizontal rule"
       >
-        ―
+        HR
       </ToolBtn>
       <Sep />
       <ToolBtn
@@ -183,11 +187,11 @@ function ToolBtn({
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className={`min-w-[28px] h-7 px-2 rounded text-sm border transition ${
+      className={`min-w-[34px] h-7 px-2 font-mono text-xs uppercase tracking-wider border transition-colors ${
         active
-          ? "bg-neutral-900 text-white border-neutral-900"
-          : "bg-white text-neutral-700 border-neutral-300 hover:border-neutral-500"
-      } ${disabled ? "opacity-40 cursor-not-allowed" : "cursor-pointer"}`}
+          ? "bg-accent text-accent-fg border-accent"
+          : "bg-transparent text-fg border-border hover:border-fg"
+      } ${disabled ? "opacity-30 cursor-not-allowed" : "cursor-pointer"}`}
     >
       {children}
     </button>
@@ -195,5 +199,5 @@ function ToolBtn({
 }
 
 function Sep() {
-  return <span className="self-stretch border-l border-neutral-300 mx-1" />;
+  return <span className="self-stretch w-px bg-border mx-1" />;
 }

@@ -32,7 +32,7 @@ export function FixedPageView({ page, resources, scale = 1 }: FixedPageViewProps
     <div
       role="region"
       aria-label={`Page ${page.number}`}
-      className="relative bg-white shadow-md"
+      className="relative bg-white border border-border"
       style={{ width: `${w}px`, height: `${h}px` }}
     >
       {page.layers.map((layer, i) => (

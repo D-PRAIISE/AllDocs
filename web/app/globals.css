@@ -1,28 +1,147 @@
 @import "tailwindcss";
 
-:root {
-  --bg: #f8f7f4;
-  --fg: #1a1a1a;
-  --accent: #fcc46a;
+/* ----- Design tokens (dark-first brutalist palette) ----- */
+@theme {
+  --color-bg: #0a0a0a;
+  --color-surface: #141414;
+  --color-elevated: #1c1c1c;
+  --color-input: #181818;
+  --color-border: #2a2a2a;
+  --color-border-strong: #404040;
+  --color-fg: #fafafa;
+  --color-muted: #888888;
+  --color-subtle: #555555;
+  --color-accent: #fcc46a;
+  --color-accent-hover: #ffd07f;
+  --color-accent-fg: #0a0a0a;
+  --color-success: #00d9a5;
+  --color-error: #ff5b5b;
+  --color-warn: #fbbf24;
+  --color-code: #6ee7b7;
+
+  --font-sans:
+    var(--app-font-sans, "Inter"), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono:
+    var(--app-font-mono, "JetBrains Mono"), ui-monospace, "Cascadia Code", "Menlo", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #14151a;
-    --fg: #f1f1f1;
-    --accent: #fcc46a;
-  }
-}
-
+/* ----- Base ----- */
 html,
 body {
-  background: var(--bg);
-  color: var(--fg);
+  background: var(--color-bg);
+  color: var(--color-fg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+/* No rounded corners by default — brutalist defaults. */
+button,
+input,
+select,
+textarea {
+  border-radius: 0;
+}
+
+/* ----- Brutalist primitives ----- */
+@utility label {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.6875rem;
+  color: var(--color-muted);
+}
+
+@utility hr-thin {
+  height: 1px;
+  background: var(--color-border);
+  border: 0;
+}
+
+@utility hr-strong {
+  height: 1px;
+  background: var(--color-border-strong);
+  border: 0;
+}
+
+/* Solid + outline button styles use the same shape: no radius, 1px border. */
+@utility btn-primary {
+  display: inline-flex;
+  align-items: center;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  border: 1px solid var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.5rem 0.875rem;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+@utility btn-primary {
+  &:hover:not(:disabled) {
+    background: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+@utility btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  color: var(--color-fg);
+  border: 1px solid var(--color-border-strong);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.5rem 0.875rem;
+  cursor: pointer;
+  transition:
+    border-color 100ms ease,
+    color 100ms ease;
+}
+@utility btn-ghost {
+  &:hover:not(:disabled) {
+    border-color: var(--color-fg);
+  }
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+@utility btn-success {
+  display: inline-flex;
+  align-items: center;
+  background: var(--color-success);
+  color: var(--color-bg);
+  border: 1px solid var(--color-success);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 0.5rem 0.875rem;
+  cursor: pointer;
+}
+@utility btn-success {
+  &:disabled {
+    background: var(--color-elevated);
+    color: var(--color-subtle);
+    border-color: var(--color-border);
+    cursor: not-allowed;
+  }
 }

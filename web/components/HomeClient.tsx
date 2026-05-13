@@ -28,7 +28,6 @@ export function HomeClient() {
   const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch the UDM whenever `src` changes.
   useEffect(() => {
     let cancelled = false;
     setError(null);
@@ -139,92 +138,99 @@ export function HomeClient() {
   return (
     <div className="space-y-6">
       <UploadZone onUploaded={handleUploaded} />
-      <div className="flex flex-wrap items-center gap-3 text-xs">
-        {meta ? (
-          <span className="text-neutral-500 font-mono">
-            Loaded: {meta.filename} · {meta.format.toUpperCase()} ·{" "}
-            {(meta.size / 1024).toFixed(1)} KB · imported in {meta.ms_taken} ms · session{" "}
-            <span className="text-neutral-400">{meta.session_id.slice(0, 8)}</span>
-          </span>
-        ) : (
-          <span className="text-neutral-500 font-mono">
-            Showing built-in synthetic fixture.
-          </span>
-        )}
 
-        {canEdit && !isEditing && (
-          <button
-            onClick={() => setIsEditing(true)}
-            className="px-3 py-1.5 bg-neutral-900 text-white rounded text-sm font-medium hover:bg-neutral-700 transition"
-          >
-            Edit
-          </button>
-        )}
+      <div className="border border-border bg-surface">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 border-b border-border">
+          <div className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">
+            {meta ? "session" : "default"}
+          </div>
+          {meta ? (
+            <div className="font-mono text-xs text-fg">
+              {meta.filename}{" "}
+              <span className="text-muted">·</span>{" "}
+              <span className="text-accent">{meta.format}</span>{" "}
+              <span className="text-muted">·</span>{" "}
+              {(meta.size / 1024).toFixed(1)}KB{" "}
+              <span className="text-muted">·</span>{" "}
+              {meta.ms_taken}ms{" "}
+              <span className="text-muted">·</span>{" "}
+              <span className="text-subtle">{meta.session_id.slice(0, 8)}</span>
+            </div>
+          ) : (
+            <div className="font-mono text-xs text-muted">
+              built-in synthetic fixture
+            </div>
+          )}
+          {meta && (
+            <button
+              onClick={resetToSynthetic}
+              className="ml-auto font-mono text-[0.65rem] uppercase tracking-wider text-subtle hover:text-muted underline-offset-4 hover:underline"
+            >
+              reset to synthetic
+            </button>
+          )}
+        </div>
 
-        {isEditing && (
-          <>
-            <button
-              onClick={handleSave}
-              disabled={!isDirty}
-              className={`px-3 py-1.5 rounded text-sm font-medium transition ${
-                isDirty
-                  ? "bg-emerald-600 text-white hover:bg-emerald-500"
-                  : "bg-neutral-200 text-neutral-400 cursor-not-allowed"
-              }`}
-            >
-              Save changes
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+          {canEdit && !isEditing && (
+            <button onClick={() => setIsEditing(true)} className="btn-ghost">
+              edit
             </button>
-            <button
-              onClick={handleDiscard}
-              className="px-3 py-1.5 bg-white text-neutral-700 border border-neutral-300 rounded text-sm font-medium hover:border-neutral-500 transition"
-            >
-              {isDirty ? "Discard" : "Done editing"}
-            </button>
-            {isDirty && (
-              <span className="text-amber-700 text-xs">Unsaved changes</span>
-            )}
-          </>
-        )}
+          )}
 
-        {showDownload && !isEditing && (
-          <>
-            <button
-              onClick={handleDownloadPdf}
-              disabled={isDownloading}
-              className="px-3 py-1.5 bg-amber-500 text-neutral-900 rounded text-sm font-medium hover:bg-amber-400 transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isDownloading ? "Exporting..." : "Download as PDF"}
-            </button>
-            {doc.mode === "flow" && (
+          {isEditing && (
+            <>
               <button
-                onClick={handleDownloadDocx}
-                disabled={isDownloading}
-                className="px-3 py-1.5 bg-white text-neutral-700 border border-neutral-300 rounded text-sm font-medium hover:border-neutral-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleSave}
+                disabled={!isDirty}
+                className="btn-success"
               >
-                Download as DOCX
+                save
               </button>
-            )}
-          </>
-        )}
+              <button onClick={handleDiscard} className="btn-ghost">
+                {isDirty ? "discard" : "done"}
+              </button>
+              {isDirty && (
+                <span className="font-mono text-[0.65rem] uppercase tracking-wider text-warn">
+                  unsaved changes
+                </span>
+              )}
+            </>
+          )}
 
-        {meta && (
-          <button
-            onClick={resetToSynthetic}
-            className="underline text-neutral-500 hover:text-neutral-700"
-          >
-            reset to synthetic
-          </button>
-        )}
+          {showDownload && !isEditing && (
+            <>
+              <button
+                onClick={handleDownloadPdf}
+                disabled={isDownloading}
+                className="btn-primary"
+              >
+                {isDownloading ? "exporting…" : "↓ pdf"}
+              </button>
+              {doc?.mode === "flow" && (
+                <button
+                  onClick={handleDownloadDocx}
+                  disabled={isDownloading}
+                  className="btn-ghost"
+                >
+                  ↓ docx
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        <div className="border border-error/40 bg-error/10 px-4 py-3 font-mono text-xs text-error">
           {error}
         </div>
       )}
 
       {doc === null && !error && (
-        <div className="p-6 text-neutral-500">Loading {src}...</div>
+        <div className="border border-border bg-surface px-4 py-12 text-center font-mono text-xs uppercase tracking-wider text-muted">
+          loading {src}…
+        </div>
       )}
 
       {doc !== null && draftDoc !== null && (

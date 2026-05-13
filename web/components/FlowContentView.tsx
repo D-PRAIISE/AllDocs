@@ -20,7 +20,7 @@ interface FlowContentViewProps {
  */
 export function FlowContentView({ blocks, resources }: FlowContentViewProps) {
   return (
-    <article className="prose prose-neutral max-w-none bg-white rounded-lg border border-neutral-200 p-8 [&_h1]:text-3xl [&_h1]:font-bold [&_h1]:mt-0 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-6 [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-4 [&_p]:my-3 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:my-1 [&_table]:w-full [&_table]:border-collapse [&_th]:border [&_th]:border-neutral-300 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:bg-neutral-100 [&_td]:border [&_td]:border-neutral-300 [&_td]:px-3 [&_td]:py-2 [&_blockquote]:border-l-4 [&_blockquote]:border-neutral-300 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-neutral-600 [&_hr]:my-6 [&_hr]:border-neutral-200 [&_pre]:bg-neutral-100 [&_pre]:rounded [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-sm">
+    <article className="border border-border bg-surface p-10 text-fg [&_h1]:text-3xl [&_h1]:font-bold [&_h1]:mt-0 [&_h1]:mb-4 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:mt-8 [&_h2]:mb-3 [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:mt-6 [&_h3]:mb-2 [&_p]:my-3 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3 [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3 [&_li]:my-1 [&_table]:w-full [&_table]:border-collapse [&_table]:my-4 [&_th]:border [&_th]:border-border-strong [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:bg-elevated [&_th]:font-mono [&_th]:text-xs [&_th]:uppercase [&_th]:tracking-wider [&_td]:border [&_td]:border-border [&_td]:px-3 [&_td]:py-2 [&_blockquote]:border-l-2 [&_blockquote]:border-accent [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-muted [&_blockquote]:my-4 [&_hr]:my-6 [&_hr]:border-border [&_pre]:bg-bg [&_pre]:border [&_pre]:border-border [&_pre]:p-3 [&_pre]:font-mono [&_pre]:text-sm [&_pre]:text-code [&_pre]:overflow-x-auto">
       {blocks.map((block, i) => (
         <BlockView key={i} block={block} resources={resources} />
       ))}
@@ -89,8 +89,8 @@ function BlockView({ block, resources }: { block: Block; resources: Resources })
       // v0.1: placeholder block image. The flow-mode pipeline doesn't
       // yet extract DOCX inline pictures (tracked for v0.2).
       return (
-        <div className="my-4 border border-dashed border-neutral-300 bg-neutral-50 px-4 py-8 text-sm text-neutral-400 text-center">
-          image placeholder · {block.image_id}
+        <div className="my-4 border border-dashed border-border bg-elevated px-4 py-8 font-mono text-xs uppercase tracking-wider text-muted text-center">
+          image · {block.image_id}
         </div>
       );
     default:
@@ -130,7 +130,7 @@ function InlineView({ inline, resources }: { inline: Inline; resources: Resource
         <a
           href={inline.href}
           title={inline.title}
-          className="text-amber-700 underline hover:text-amber-900"
+          className="text-accent underline underline-offset-4 hover:text-accent-hover"
           target="_blank"
           rel="noreferrer"
         >
@@ -170,7 +170,7 @@ function applyMark(mark: Mark, content: ReactNode, resources: Resources): ReactN
     case "subscript":
       return <sub>{content}</sub>;
     case "code":
-      return <code className="px-1 bg-neutral-100 rounded text-sm">{content}</code>;
+      return <code className="px-1 bg-bg border border-border text-code text-sm font-mono">{content}</code>;
     case "color":
       return <span style={{ color: colorRefToCss(mark.color, resources) }}>{content}</span>;
     case "highlight":
