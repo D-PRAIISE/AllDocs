@@ -86,11 +86,42 @@ def _resolve_fonts(
         data_ref = font.get("data_ref")
         if data_ref and not data_ref.startswith(("http://", "https://", "xref:")):
             font_path = _resolve_relative(base, data_ref)
-            if font_path.exists():
+            if font_path.exists() and _font_usable_for_unicode(font_path):
                 handles[font_id] = ("file", str(font_path))
                 continue
         handles[font_id] = ("base14", _base14_for(font))
     return handles
+
+
+# Latin sample used to probe whether an extracted font's cmap can resolve
+# Unicode codepoints. Subset fonts extracted from PDFs with Identity-H /
+# CID encoding (Type0) often have no usable Unicode cmap — re-embedding
+# them via insert_text(fontfile=) produces missing glyphs (the "boxes"
+# bug surfaced on CSCA + Hygeia PDFs on 2026-05-13). When the probe
+# fails, we fall back to PDF base-14 (Times/Helvetica family).
+# Threshold of 70% is a hedge for subsets that legitimately lack
+# uncommon glyphs but still have most of the alphabet.
+_UNICODE_PROBE = "TheQuickBrownFx0123 .,-"
+_UNICODE_PROBE_THRESHOLD = 0.7
+
+
+def _font_usable_for_unicode(font_path: Path) -> bool:
+    """True if PyMuPDF can resolve common Latin Unicode codepoints to glyphs
+    in the font file at ``font_path``. Used to skip extracted subset fonts
+    that lack a usable cmap (typically CIDFont extracts from Identity-H
+    PDFs). See PDF-adapter lesson #13."""
+    try:
+        font = pymupdf.Font(fontfile=str(font_path))
+    except Exception:
+        return False
+    hits = 0
+    for ch in _UNICODE_PROBE:
+        try:
+            if font.has_glyph(ord(ch)):
+                hits += 1
+        except Exception:
+            return False
+    return hits >= len(_UNICODE_PROBE) * _UNICODE_PROBE_THRESHOLD
 
 
 def _base14_for(font: dict[str, Any]) -> str:
