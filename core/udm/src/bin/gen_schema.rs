@@ -28,7 +28,10 @@ fn main() -> ExitCode {
 
     if let Some(parent) = out.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("error: failed to create parent dir {}: {e}", parent.display());
+            eprintln!(
+                "error: failed to create parent dir {}: {e}",
+                parent.display()
+            );
             return ExitCode::from(2);
         }
     }

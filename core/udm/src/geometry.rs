@@ -16,10 +16,16 @@ pub struct Length {
 
 impl Length {
     pub const fn pt(value: f64) -> Self {
-        Self { value, unit: Unit::Pt }
+        Self {
+            value,
+            unit: Unit::Pt,
+        }
     }
     pub const fn px(value: f64) -> Self {
-        Self { value, unit: Unit::Px }
+        Self {
+            value,
+            unit: Unit::Px,
+        }
     }
 }
 
@@ -78,9 +84,12 @@ pub struct Matrix2D {
 
 impl Matrix2D {
     pub const IDENTITY: Self = Self {
-        a: 1.0, b: 0.0,
-        c: 0.0, d: 1.0,
-        e: 0.0, f: 0.0,
+        a: 1.0,
+        b: 0.0,
+        c: 0.0,
+        d: 1.0,
+        e: 0.0,
+        f: 0.0,
     };
 }
 
@@ -97,7 +106,10 @@ mod tests {
 
     #[test]
     fn percent_unit_serializes_as_symbol() {
-        let l = Length { value: 50.0, unit: Unit::Percent };
+        let l = Length {
+            value: 50.0,
+            unit: Unit::Percent,
+        };
         let json = serde_json::to_value(l).unwrap();
         assert_eq!(json, serde_json::json!({ "value": 50.0, "unit": "%" }));
     }

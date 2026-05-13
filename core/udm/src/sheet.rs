@@ -75,12 +75,22 @@ pub struct CellComment {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum CellValue {
-    Number { value: f64 },
-    String { value: String },
-    Boolean { value: bool },
+    Number {
+        value: f64,
+    },
+    String {
+        value: String,
+    },
+    Boolean {
+        value: bool,
+    },
     /// ISO 8601.
-    Date { value: String },
-    Error { code: String },
+    Date {
+        value: String,
+    },
+    Error {
+        code: String,
+    },
     Empty,
 }
 

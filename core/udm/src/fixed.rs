@@ -112,20 +112,43 @@ pub struct ShapeLayer {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Geometry {
-    Path { d: String },
+    Path {
+        d: String,
+    },
     #[serde(rename = "rect")]
-    Rectangle { x: Length, y: Length, w: Length, h: Length },
-    Ellipse { cx: Length, cy: Length, rx: Length, ry: Length },
-    Polygon { points: Vec<(Length, Length)> },
+    Rectangle {
+        x: Length,
+        y: Length,
+        w: Length,
+        h: Length,
+    },
+    Ellipse {
+        cx: Length,
+        cy: Length,
+        rx: Length,
+        ry: Length,
+    },
+    Polygon {
+        points: Vec<(Length, Length)>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Paint {
-    Solid { color: ColorRef },
-    LinearGradient { stops: Vec<GradientStop>, angle: f64 },
-    RadialGradient { stops: Vec<GradientStop> },
-    Pattern { image_id: String },
+    Solid {
+        color: ColorRef,
+    },
+    LinearGradient {
+        stops: Vec<GradientStop>,
+        angle: f64,
+    },
+    RadialGradient {
+        stops: Vec<GradientStop>,
+    },
+    Pattern {
+        image_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

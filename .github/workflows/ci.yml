@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-core:
+    name: Rust core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+
+      - name: cargo fmt
+        working-directory: core
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        working-directory: core
+        # Clippy runs informationally; we don't gate on -D warnings yet
+        # because v0.1 still has pedantic doc-markdown lints to clean up.
+        # Tighten once we've done a clippy pass.
+        run: cargo clippy --workspace --all-targets
+
+      - name: cargo test
+        working-directory: core
+        run: cargo test --workspace --verbose
+
+      - name: Regenerate JSON schema
+        working-directory: core
+        run: cargo run --bin gen_schema
+
+      - name: Verify proto/udm.schema.json is in sync
+        run: |
+          if ! git diff --exit-code proto/udm.schema.json; then
+            echo "::error::proto/udm.schema.json drifted from core/udm/ types."
+            echo "Run 'cd core && cargo run --bin gen_schema' locally and commit the result."
+            exit 1
+          fi
+
+  python-adapters:
+    name: Python adapters
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install pdf-adapter (editable)
+        run: pip install -e services/pdf-adapter
+
+      - name: Install office-adapter (editable)
+        run: pip install -e services/office-adapter
+
+      - name: Smoke-test pdf-adapter on synthetic.pdf
+        run: python -m pdf_adapter.cli tests/fixtures/synthetic.pdf --summary
+
+      - name: Smoke-test office-adapter on synthetic.docx
+        run: python -m office_adapter.cli tests/fixtures/synthetic.docx --summary
+
+      - name: PDF round-trip (import + export + render)
+        run: |
+          python tests/round_trip.py
+          test -f tests/fixtures/round_trip_output/output.pdf
+
+      - name: DOCX round-trip (import + export + structure check)
+        run: |
+          python -m office_adapter.cli tests/fixtures/synthetic.docx -o /tmp/doc.udm.json
+          python -m office_adapter.cli --export /tmp/doc.udm.json -o /tmp/roundtrip.docx
+          python -m office_adapter.cli /tmp/roundtrip.docx --summary
+
+  web:
+    name: Web (Next.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: TypeScript typecheck
+        run: pnpm --filter web typecheck
+
+      - name: Next.js production build
+        run: pnpm --filter web build

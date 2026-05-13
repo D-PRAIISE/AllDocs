@@ -73,9 +73,18 @@ pub enum ColorValue {
         #[serde(skip_serializing_if = "Option::is_none")]
         a: Option<u8>,
     },
-    Cmyk { c: f64, m: f64, y: f64, k: f64 },
-    Hex { hex: String },
-    Named { name: String },
+    Cmyk {
+        c: f64,
+        m: f64,
+        y: f64,
+        k: f64,
+    },
+    Hex {
+        hex: String,
+    },
+    Named {
+        name: String,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -131,7 +140,12 @@ mod tests {
 
     #[test]
     fn color_value_rgb_round_trip() {
-        let c = ColorValue::Rgb { r: 255, g: 128, b: 64, a: None };
+        let c = ColorValue::Rgb {
+            r: 255,
+            g: 128,
+            b: 64,
+            a: None,
+        };
         let json = serde_json::to_value(&c).unwrap();
         assert_eq!(
             json,
@@ -144,7 +158,10 @@ mod tests {
     #[test]
     fn mark_bold_serializes_as_tagged() {
         let m = Mark::Bold;
-        assert_eq!(serde_json::to_value(m).unwrap(), serde_json::json!({ "type": "bold" }));
+        assert_eq!(
+            serde_json::to_value(m).unwrap(),
+            serde_json::json!({ "type": "bold" })
+        );
     }
 
     #[test]
@@ -152,7 +169,9 @@ mod tests {
         let m = Mark::Color {
             color: ColorRef {
                 reference: None,
-                literal: Some(ColorValue::Hex { hex: "#ff0000".into() }),
+                literal: Some(ColorValue::Hex {
+                    hex: "#ff0000".into(),
+                }),
             },
         };
         let json = serde_json::to_value(&m).unwrap();

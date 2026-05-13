@@ -97,6 +97,10 @@ tests/fixtures/**/private/
 # Round-trip test output — regeneratable via `python tests/round_trip.py`.
 tests/fixtures/round_trip_output/
 
+# Per-fixture UDM JSON outputs — regenerate by running the adapter on
+# the corresponding source file (synthetic.pdf, synthetic.docx, etc).
+tests/fixtures/*.udm.json
+
 # --- Generated artifacts ---
 proto/generated/
 **/__generated__/
