@@ -56,6 +56,15 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Export mode: input is a UDM JSON, output is a PDF",
     )
+    parser.add_argument(
+        "--base-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Export: base directory for resolving relative data_ref values "
+            "(defaults to the UDM file's parent directory)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not args.input.exists():
@@ -66,7 +75,13 @@ def main(argv: list[str] | None = None) -> int:
         if not args.output:
             print("error: --export requires -o OUTPUT", file=sys.stderr)
             return 2
-        export_pdf_from_file(args.input, args.output)
+        if args.base_dir is not None:
+            from .exporter import export_pdf
+
+            udm = json.loads(args.input.read_text(encoding="utf-8"))
+            export_pdf(udm, args.output, base_dir=args.base_dir)
+        else:
+            export_pdf_from_file(args.input, args.output)
         size = args.output.stat().st_size
         print(f"Exported {args.output} ({size} bytes)", file=sys.stderr)
         return 0

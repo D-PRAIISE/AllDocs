@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import {
   type Document,
@@ -13,7 +13,19 @@ import { FixedPageView } from "./FixedPageView";
 import { FlowContentView } from "./FlowContentView";
 
 interface UdmViewerProps {
-  src: string;
+  doc: Document;
+}
+
+export function UdmViewer({ doc }: UdmViewerProps) {
+  const [scale, setScale] = useState(1);
+
+  return (
+    <div className="space-y-6">
+      <FontFaceStyles resources={doc.resources} />
+      <DocumentSummary doc={doc} />
+      <ContentRenderer doc={doc} scale={scale} onScaleChange={setScale} />
+    </div>
+  );
 }
 
 /**
@@ -21,7 +33,7 @@ interface UdmViewerProps {
  * (i.e. the importer extracted the embedded font to disk). Each face uses
  * a unique `udm-<font_id>` family so it can't collide with system fonts.
  */
-function FontFaceStyles({ resources }: { resources: Resources }) {
+export function FontFaceStyles({ resources }: { resources: Resources }) {
   const css = useMemo(
     () =>
       resources.fonts
@@ -42,50 +54,7 @@ function FontFaceStyles({ resources }: { resources: Resources }) {
   return <style dangerouslySetInnerHTML={{ __html: css }} />;
 }
 
-export function UdmViewer({ src }: UdmViewerProps) {
-  const [doc, setDoc] = useState<Document | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [scale, setScale] = useState(1);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(src)
-      .then((r) => {
-        if (!r.ok) throw new Error(`fetch ${src}: ${r.status}`);
-        return r.json() as Promise<Document>;
-      })
-      .then((d) => {
-        if (!cancelled) setDoc(d);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [src]);
-
-  if (error) {
-    return (
-      <div className="p-6 text-red-700 bg-red-50 border border-red-200 rounded">
-        Error loading <code className="font-mono">{src}</code>: {error}
-      </div>
-    );
-  }
-  if (!doc) {
-    return <div className="p-6 text-neutral-500">Loading {src}...</div>;
-  }
-
-  return (
-    <div className="space-y-6">
-      <FontFaceStyles resources={doc.resources} />
-      <DocumentSummary doc={doc} />
-      <ContentRenderer doc={doc} scale={scale} onScaleChange={setScale} />
-    </div>
-  );
-}
-
-function DocumentSummary({ doc }: { doc: Document }) {
+export function DocumentSummary({ doc }: { doc: Document }) {
   return (
     <div className="rounded border border-neutral-200 bg-white p-4 text-sm">
       <div className="font-mono text-xs text-neutral-500 mb-1">{doc.id}</div>
