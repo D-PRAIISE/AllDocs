@@ -121,13 +121,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   const udmPath = join(sessionDir, "doc.udm.json");
   const assetsDir = join(sessionDir, "assets");
   const urlPrefix = `/uploads/${sessionId}/assets`;
+  const sourceUrl = `/uploads/${sessionId}/source.${format}`;
   const pythonPath = resolve(servicesRoot, adapter.pythonPathSubdir);
 
   await writeFile(sourcePath, buf);
 
   const started = Date.now();
   try {
-    await runImporter(adapter, sourcePath, udmPath, assetsDir, urlPrefix, pythonPath);
+    await runImporter(adapter, sourcePath, udmPath, assetsDir, urlPrefix, sourceUrl, pythonPath);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: `Importer failed: ${msg}` }, { status: 500 });
@@ -150,6 +151,7 @@ function runImporter(
   output: string,
   assetsDir: string,
   urlPrefix: string,
+  sourceUrl: string,
   pythonPath: string
 ): Promise<void> {
   return new Promise((resolve_, reject) => {
@@ -157,6 +159,10 @@ function runImporter(
     const cliArgs = ["-m", adapter.module, input, "-o", output];
     if (adapter.extractsAssets) {
       cliArgs.push("--assets-dir", assetsDir, "--assets-url-prefix", urlPrefix);
+    }
+    // PDF adapter supports passthrough export. Office adapter does not yet.
+    if (adapter.format === "pdf") {
+      cliArgs.push("--source-url", sourceUrl);
     }
     const proc = spawn("python", cliArgs, { env, windowsHide: true });
 

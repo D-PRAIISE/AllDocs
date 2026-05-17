@@ -52,6 +52,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Import: URL prefix prepended to extracted asset data_refs (e.g. /synthetic.assets)",
     )
     parser.add_argument(
+        "--source-url",
+        default=None,
+        help=(
+            "Import: URL/path where the original source PDF will be reachable "
+            "at export time (resolved against --base-dir). When set, a passthrough "
+            "block is attached to the UDM so an unedited round-trip emits the "
+            "source bytes verbatim instead of re-rendering."
+        ),
+    )
+    parser.add_argument(
         "--export",
         action="store_true",
         help="Export mode: input is a UDM JSON, output is a PDF",
@@ -90,6 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         args.input,
         assets_dir=args.assets_dir,
         assets_url_prefix=args.assets_url_prefix,
+        source_url=args.source_url,
     )
 
     if args.summary:

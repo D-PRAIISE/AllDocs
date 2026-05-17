@@ -53,6 +53,7 @@ def import_pdf(
     path: str | Path,
     assets_dir: str | Path | None = None,
     assets_url_prefix: str = "",
+    source_url: str | None = None,
 ) -> dict[str, Any]:
     """Read a PDF file and produce a UDM v0.1.0 document.
 
@@ -63,8 +64,15 @@ def import_pdf(
     no prefix is given). When ``assets_dir`` is None, ``data_ref`` is left
     as the opaque ``xref:N`` form.
 
+    If ``source_url`` is given, a passthrough block is attached to
+    ``metadata.passthrough`` recording the URL and a content fingerprint.
+    The exporter uses this to short-circuit re-rendering when the UDM
+    hasn't been edited — see _passthrough.py.
+
     Returns a dict ready to be serialized as UDM JSON.
     """
+    from . import _passthrough
+
     path = Path(path)
     raw = path.read_bytes()
     sha256 = hashlib.sha256(raw).hexdigest()
@@ -118,6 +126,9 @@ def import_pdf(
 
         if assets_dir is not None:
             _extract_assets(udm, doc, Path(assets_dir), assets_url_prefix)
+
+        if source_url:
+            _passthrough.attach(udm, source_url, sha256)
 
         return udm
     finally:

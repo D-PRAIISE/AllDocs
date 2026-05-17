@@ -15,19 +15,31 @@ Scope (v0.1):
     extraction) are skipped — the importer must be run with --assets-dir
     if you want round-trip-able images.
 
+Passthrough (Approach C, lesson #14):
+  When the UDM still matches the fingerprint recorded at import time AND
+  the original source PDF is reachable, we copy the source bytes
+  verbatim to the output and skip rendering entirely. This is the only
+  way to guarantee byte-identical round-trip — the v0.1 render path
+  unavoidably loses font fidelity, vector precision, annotations, and
+  embedded resources we don't yet model in UDM.
+
 Lessons applied (memory/project_alldocs_pdf_adapter.md):
   #1 (subset fonts): fall back to base-14 when no usable font file exists
   #3 (off-page placements): preserved verbatim — Length values copied through
   #4 (multi-placement images): each ImageLayer is independent; resource is
      loaded once but inserted at each placement
+  #14 (passthrough): byte-identical emit when fingerprint matches.
 """
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
 import pymupdf
+
+from . import _passthrough
 
 # Approximate descender as a fraction of fontsize.
 # UDM PositionedTextRun.y is bbox-bottom (set by importer from span['bbox'][3]),
@@ -55,6 +67,9 @@ def export_pdf(
 
     base = Path(base_dir) if base_dir else Path.cwd()
 
+    if _try_passthrough(udm, output_path, base):
+        return
+
     doc = pymupdf.open()
     try:
         font_handles = _resolve_fonts(udm["resources"]["fonts"], base)
@@ -66,6 +81,29 @@ def export_pdf(
         doc.save(str(output_path), garbage=4, deflate=True, clean=True)
     finally:
         doc.close()
+
+
+def _try_passthrough(
+    udm: dict[str, Any],
+    output_path: str | Path,
+    base: Path,
+) -> bool:
+    """If the UDM still matches its import-time fingerprint AND the
+    original source bytes are reachable, copy them verbatim to
+    ``output_path`` and return True. Otherwise return False — caller
+    falls through to the render path.
+    """
+    pt = _passthrough.can_passthrough(udm)
+    if pt is None:
+        return False
+
+    source_url: str = pt["source_url"]
+    source_path = _resolve_relative(base, source_url)
+    if not source_path.exists():
+        return False
+
+    shutil.copyfile(str(source_path), str(output_path))
+    return True
 
 
 # ---- Fonts ---------------------------------------------------------------

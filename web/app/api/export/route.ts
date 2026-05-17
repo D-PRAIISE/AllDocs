@@ -60,7 +60,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const outputPdf = join(tmp, "output.pdf");
 
   try {
-    await runExporter(udmPath, outputPdf, pythonPath);
+    // base_dir = publicDir so passthrough source_urls (e.g.
+    // "/uploads/<id>/source.pdf") and asset URLs resolve to real files.
+    await runExporter(udmPath, outputPdf, pythonPath, publicDir);
     const pdfBytes = await readFile(outputPdf);
 
     const filename = deriveFilename(udmParam);
