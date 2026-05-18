@@ -27,19 +27,46 @@ interface FixedPageViewProps {
 export function FixedPageView({ page, resources, scale = 1 }: FixedPageViewProps) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
+  const pageWPt = page.width.unit === "pt" ? page.width.value : lengthToPx(page.width) / (96 / 72);
+  const pageHPt = page.height.unit === "pt" ? page.height.value : lengthToPx(page.height) / (96 / 72);
+
+  // Same paint-order classification used by the Konva editor + exporter:
+  // page-spanning background shapes paint first, then images, then
+  // decoration shapes, then text. DOM-stacks later siblings on top of
+  // earlier ones, so the array order ends up being the visual order.
+  const ordered = page.layers
+    .map((layer, originalIdx) => ({ layer, originalIdx }))
+    .sort(
+      (a, b) =>
+        paintOrderKey(a.layer, pageWPt, pageHPt) - paintOrderKey(b.layer, pageWPt, pageHPt)
+    );
 
   return (
     <div
       role="region"
       aria-label={`Page ${page.number}`}
-      className="relative bg-white border border-border"
+      className="relative bg-white border border-border overflow-hidden"
       style={{ width: `${w}px`, height: `${h}px` }}
     >
-      {page.layers.map((layer, i) => (
-        <LayerView key={i} layer={layer} resources={resources} scale={scale} />
+      {ordered.map(({ layer, originalIdx }) => (
+        <LayerView key={originalIdx} layer={layer} resources={resources} scale={scale} />
       ))}
     </div>
   );
+}
+
+function paintOrderKey(layer: Layer, pageWPt: number, pageHPt: number): number {
+  if (layer.type === "shape") {
+    const geom = layer.geometry as { kind?: string; w?: { value: number }; h?: { value: number } };
+    if (geom?.kind === "rect" && geom.w && geom.h) {
+      const spansWidth = geom.w.value / pageWPt >= 0.9;
+      const spansHeight = geom.h.value / pageHPt >= 0.9;
+      const bigArea = (geom.w.value * geom.h.value) / (pageWPt * pageHPt) >= 0.2;
+      if (spansWidth || spansHeight || bigArea) return 0; // bg shape
+    }
+    return 2; // fg shape
+  }
+  return { image: 1, annotation: 3, text: 4, form: 5 }[layer.type] ?? 99;
 }
 
 function LayerView({
@@ -168,9 +195,44 @@ function ImageLayerView({
   );
 }
 
-function ShapeLayerView({ scale: _scale }: { layer: ShapeLayer; scale: number }) {
-  // v0.1 viewer: shapes acknowledged but not rendered. Phase 2 adds SVG rendering.
-  return null;
+function ShapeLayerView({ layer, scale }: { layer: ShapeLayer; scale: number }) {
+  // Render solid-fill rectangles only (the importer also captures only rects
+  // in v0.1). Curves, paths, and gradients land in v0.2.
+  const geom = layer.geometry as
+    | { kind?: string; x?: never; y?: never; w?: never; h?: never }
+    | undefined;
+  if (geom?.kind !== "rect" || !geom.x || !geom.y || !geom.w || !geom.h) return null;
+
+  const x = lengthToPx(geom.x) * scale;
+  const y = lengthToPx(geom.y) * scale;
+  const w = lengthToPx(geom.w) * scale;
+  const h = lengthToPx(geom.h) * scale;
+
+  const fill = (layer.fill as { kind?: string; color?: never } | undefined) ?? undefined;
+  const stroke =
+    (layer.stroke as { paint?: { color?: never }; width?: never } | undefined) ?? undefined;
+
+  const bg = fill?.kind === "solid" && fill.color ? colorRefToCss(fill.color) : undefined;
+  const border =
+    stroke?.paint?.color && stroke.width
+      ? `${lengthToPx(stroke.width) * scale}px solid ${colorRefToCss(stroke.paint.color)}`
+      : undefined;
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: x,
+        top: y,
+        width: w,
+        height: h,
+        background: bg,
+        border,
+        opacity: layer.opacity ?? 1,
+        pointerEvents: "none",
+      }}
+    />
+  );
 }
 
 function AnnotationLayerView({ layer: _layer }: { layer: AnnotationLayer }) {

@@ -330,6 +330,7 @@ function ImageNode({
         fill={failed ? "#fef2f2" : "#f5f5f5"}
         stroke={failed ? "#dc2626" : "#d4d4d4"}
         dash={[4, 4]}
+        listening={false}
       />
     );
   }
@@ -343,6 +344,12 @@ function ImageNode({
       height={h}
       rotation={layer.rotation ?? 0}
       opacity={layer.opacity ?? 1}
+      // Images must not intercept clicks in v1 — only text is interactive.
+      // Without this, off-page or oversized images (lesson #3) block clicks
+      // on text runs that visually sit on top of them. Konva hit-tests
+      // top-down; a tight text bbox can let clicks fall through into the
+      // image's much larger hit area.
+      listening={false}
     />
   );
 }
