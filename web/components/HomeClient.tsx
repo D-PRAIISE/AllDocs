@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { Block, Document, FlowContent } from "@/lib/udm";
+import { FixedEditor } from "./FixedEditor";
 import { FlowEditor } from "./FlowEditor";
-import { UdmViewer } from "./UdmViewer";
+import { DocumentSummary, FontFaceStyles, UdmViewer } from "./UdmViewer";
 import { UploadZone } from "./UploadZone";
 
 interface UploadResult {
@@ -71,6 +72,14 @@ export function HomeClient() {
     [draftDoc]
   );
 
+  const handleEditedDoc = useCallback(
+    (next: Document) => {
+      setDraftDoc(next);
+      setIsDirty(true);
+    },
+    []
+  );
+
   const handleSave = useCallback(() => {
     setDoc(draftDoc);
     setIsDirty(false);
@@ -132,7 +141,7 @@ export function HomeClient() {
     setIsEditing(false);
   }, []);
 
-  const canEdit = doc?.mode === "flow";
+  const canEdit = doc?.mode === "flow" || doc?.mode === "fixed";
   const showDownload = doc !== null && (doc.mode === "fixed" || doc.mode === "flow");
 
   return (
@@ -239,6 +248,12 @@ export function HomeClient() {
             initialBlocks={(doc.content as FlowContent).blocks}
             onChange={handleEditedBlocks}
           />
+        ) : isEditing && doc.mode === "fixed" ? (
+          <div className="space-y-4">
+            <FontFaceStyles resources={draftDoc.resources} />
+            <DocumentSummary doc={draftDoc} />
+            <FixedEditor doc={draftDoc} onChange={handleEditedDoc} />
+          </div>
         ) : (
           <UdmViewer doc={doc} />
         )

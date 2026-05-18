@@ -209,7 +209,50 @@ def _base14_for(font: dict[str, Any]) -> str:
 # ---- Pages ---------------------------------------------------------------
 
 
-_LAYER_ORDER = {"image": 0, "shape": 1, "annotation": 2, "text": 3, "form": 4}
+# Paint order (lower = drawn first = at the back). Mirrors
+# web/components/FixedEditorCanvas.tsx LAYER_PAINT_ORDER.
+# Shapes split into "bg" (page-spanning panels, header bars) and "fg"
+# (table cell backgrounds, accent strips). Real PDFs often put images on
+# top of bg shapes (e.g., a logo on a colored header) and text on top of
+# fg shapes (e.g., labels in a table cell). A single shape bucket
+# can't honor both — the bg/fg split is the heuristic that handles
+# the common cases. Proper fix in v0.2 is content-stream order at
+# import time (see lesson #11).
+_LAYER_ORDER_BG_SHAPE = 0
+_LAYER_ORDER_IMAGE = 1
+_LAYER_ORDER_FG_SHAPE = 2
+_LAYER_ORDER_ANNOTATION = 3
+_LAYER_ORDER_TEXT = 4
+_LAYER_ORDER_FORM = 5
+
+
+def _shape_is_background(layer: dict[str, Any], page_width_pt: float, page_height_pt: float) -> bool:
+    geom = layer.get("geometry") or {}
+    if geom.get("kind") != "rect":
+        return False
+    try:
+        w = float(geom["w"]["value"])
+        h = float(geom["h"]["value"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    if page_width_pt <= 0 or page_height_pt <= 0:
+        return False
+    spans_width = w / page_width_pt >= 0.9
+    spans_height = h / page_height_pt >= 0.9
+    big_area = (w * h) / (page_width_pt * page_height_pt) >= 0.2
+    return spans_width or spans_height or big_area
+
+
+def _layer_order_key(layer: dict[str, Any], page_width_pt: float, page_height_pt: float) -> int:
+    t = layer.get("type", "")
+    if t == "shape":
+        return _LAYER_ORDER_BG_SHAPE if _shape_is_background(layer, page_width_pt, page_height_pt) else _LAYER_ORDER_FG_SHAPE
+    return {
+        "image": _LAYER_ORDER_IMAGE,
+        "annotation": _LAYER_ORDER_ANNOTATION,
+        "text": _LAYER_ORDER_TEXT,
+        "form": _LAYER_ORDER_FORM,
+    }.get(t, 99)
 
 
 def _render_page(
@@ -223,14 +266,12 @@ def _render_page(
     height_pt = _length_to_pt(page_data["height"])
     page = doc.new_page(width=width_pt, height=height_pt)
 
-    # Reorder layers so images render below text. The importer currently
-    # appends text first then images, but PDF z-order is bottom-up; if we
-    # used import order the images would cover the text. Long-term the
-    # importer should capture true content-stream order so we don't need
-    # this heuristic. (See project_alldocs_pdf_adapter.md lesson #11.)
+    # Sort layers by paint order. See _layer_order_key for the bg/fg shape
+    # split. Long-term the importer should capture content-stream order so
+    # this heuristic isn't needed (project_alldocs_pdf_adapter.md lesson #11).
     layers = sorted(
         page_data.get("layers", []),
-        key=lambda layer: _LAYER_ORDER.get(layer.get("type", ""), 99),
+        key=lambda layer: _layer_order_key(layer, width_pt, height_pt),
     )
     for layer in layers:
         kind = layer.get("type")
