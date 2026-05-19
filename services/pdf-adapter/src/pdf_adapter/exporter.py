@@ -39,7 +39,7 @@ from typing import Any
 
 import pymupdf
 
-from . import _passthrough
+from . import _passthrough, patch_export
 
 # Approximate descender as a fraction of fontsize.
 # UDM PositionedTextRun.y is bbox-bottom (set by importer from span['bbox'][3]),
@@ -68,6 +68,15 @@ def export_pdf(
     base = Path(base_dir) if base_dir else Path.cwd()
 
     if _try_passthrough(udm, output_path, base):
+        return
+
+    # Patch-based export: when the UDM differs from the source only by
+    # text-content edits to existing runs, apply them via redact+insert
+    # against the source PDF instead of re-rendering from scratch. This
+    # preserves font fidelity, vector precision, annotations, AcroForms,
+    # and every other resource we don't yet model in UDM. See patch_export.py
+    # and project_alldocs_pdf_adapter.md lesson #14.
+    if patch_export.try_patch_export(udm, output_path, base):
         return
 
     doc = pymupdf.open()
