@@ -152,6 +152,7 @@ export interface PositionedTextRun {
   advances?: number[];
   rotation?: number;
   ocr?: { confidence: number; engine: string };
+  _meta?: { ocr_width?: number; [k: string]: unknown };
 }
 
 export interface ImageLayer {

@@ -107,6 +107,11 @@ function TextRunView({
   resources: Resources;
   scale: number;
 }) {
+  // OCR runs sit on top of a scanned image that already shows the text.
+  // The read-only viewer would just double it up, so skip rendering them.
+  // (The editor renders them as an invisible clickable overlay instead.)
+  if (run.ocr) return null;
+
   const x = lengthToPx(run.x) * scale;
   const y = lengthToPx(run.y) * scale;
   const fontSize = lengthToPx(run.font_size) * scale;

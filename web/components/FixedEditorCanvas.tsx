@@ -89,10 +89,18 @@ function konvaFontFamily(font: FontResource | undefined): string {
   return `udm-${font.id}, ${font.family.includes(" ") ? `"${font.family}"` : font.family}, sans-serif`;
 }
 
+function runKey(pageIdx: number, layerIdx: number, runIdx: number): string {
+  return `${pageIdx}:${layerIdx}:${runIdx}`;
+}
+
 export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasProps) {
   const fixed = doc.content as FixedContent;
   const [scale, setScale] = useState(1);
   const [editing, setEditing] = useState<EditingState | null>(null);
+  // Runs whose text the user has changed this session. Used so OCR runs
+  // (invisible by default — the scanned image shows the text) flip to
+  // visible once edited, masking the stale pixels underneath.
+  const [editedKeys, setEditedKeys] = useState<ReadonlySet<string>>(new Set());
 
   const updateRun = useCallback(
     (pageIdx: number, layerIdx: number, runIdx: number, nextText: string) => {
@@ -101,7 +109,9 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       const layer = content.pages[pageIdx]!.layers[layerIdx]!;
       if (layer.type !== "text") return;
       const run = layer.runs[runIdx]!;
+      if (run.text === nextText) return;
       run.text = nextText;
+      setEditedKeys((prev) => new Set(prev).add(runKey(pageIdx, layerIdx, runIdx)));
       onChange(next);
     },
     [doc, onChange]
@@ -122,6 +132,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               doc={doc}
               scale={scale}
               editing={editing}
+              editedKeys={editedKeys}
               onStartEdit={setEditing}
               onCancelEdit={() => setEditing(null)}
               onCommitEdit={(state, text) => {
@@ -149,6 +160,7 @@ function FixedPageEditor({
   doc,
   scale,
   editing,
+  editedKeys,
   onStartEdit,
   onCancelEdit,
   onCommitEdit,
@@ -158,6 +170,7 @@ function FixedPageEditor({
   doc: Document;
   scale: number;
   editing: EditingState | null;
+  editedKeys: ReadonlySet<string>;
   onStartEdit: (s: EditingState) => void;
   onCancelEdit: () => void;
   onCommitEdit: (s: EditingState, text: string) => void;
@@ -196,6 +209,7 @@ function FixedPageEditor({
                     resources={doc.resources}
                     scale={scale}
                     editing={editing}
+                    editedKeys={editedKeys}
                     onStartEdit={onStartEdit}
                   />
                 );
@@ -225,6 +239,7 @@ function TextNodes({
   resources,
   scale,
   editing,
+  editedKeys,
   onStartEdit,
 }: {
   layer: UdmTextLayer;
@@ -233,6 +248,7 @@ function TextNodes({
   resources: Document["resources"];
   scale: number;
   editing: EditingState | null;
+  editedKeys: ReadonlySet<string>;
   onStartEdit: (s: EditingState) => void;
 }) {
   return (
@@ -247,6 +263,7 @@ function TextNodes({
             run={run}
             resources={resources}
             scale={scale}
+            isEdited={editedKeys.has(runKey(pageIdx, layerIdx, runIdx))}
             onClick={() => onStartEdit({ pageIdx, layerIdx, runIdx, initialText: run.text })}
           />
         );
@@ -255,15 +272,22 @@ function TextNodes({
   );
 }
 
+function setCursor(e: KonvaEventObject<MouseEvent>, cursor: string) {
+  const stage = e.target.getStage();
+  if (stage) stage.container().style.cursor = cursor;
+}
+
 function TextRunNode({
   run,
   resources,
   scale,
+  isEdited,
   onClick,
 }: {
   run: PositionedTextRun;
   resources: Document["resources"];
   scale: number;
+  isEdited: boolean;
   onClick: () => void;
 }) {
   const font = resources.fonts.find((f) => f.id === run.font_id);
@@ -271,6 +295,66 @@ function TextRunNode({
   const y = lengthToPx(run.y) * scale;
   const fontSize = lengthToPx(run.font_size) * scale;
   const top = y - fontSize * BASELINE_TO_TOP;
+
+  // OCR runs sit on top of a scanned image that already shows the text.
+  // Unedited: render an invisible-but-clickable hit rect (with a faint
+  // hover affordance) so we don't double up text. Edited: mask the stale
+  // pixels with an opaque rect and draw the new text on top.
+  if (run.ocr) {
+    const widthPt = run._meta?.ocr_width ?? run.text.length * lengthToPx(run.font_size) * 0.5;
+    const w = widthPt * scale;
+    const pad = fontSize * 0.15;
+    if (!isEdited) {
+      return (
+        <KonvaRect
+          x={x - pad}
+          y={top - pad}
+          width={w + pad * 2}
+          height={fontSize + pad * 2}
+          fill="#fcc46a"
+          opacity={0.06}
+          onClick={onClick}
+          onTap={onClick}
+          onMouseEnter={(e: KonvaEventObject<MouseEvent>) => {
+            e.target.opacity(0.22);
+            e.target.getLayer()?.batchDraw();
+            setCursor(e, "text");
+          }}
+          onMouseLeave={(e: KonvaEventObject<MouseEvent>) => {
+            e.target.opacity(0.06);
+            e.target.getLayer()?.batchDraw();
+            setCursor(e, "default");
+          }}
+        />
+      );
+    }
+    return (
+      <>
+        <KonvaRect
+          x={x - pad}
+          y={top - pad}
+          width={w + pad * 2}
+          height={fontSize + pad * 2}
+          fill="#ffffff"
+          listening={false}
+        />
+        <KonvaText
+          x={x}
+          y={top}
+          text={run.text}
+          fontSize={fontSize}
+          fontFamily={konvaFontFamily(font)}
+          fontStyle={konvaFontStyle(font)}
+          fill={colorRefToCss(run.color, resources)}
+          onClick={onClick}
+          onTap={onClick}
+          onMouseEnter={(e: KonvaEventObject<MouseEvent>) => setCursor(e, "text")}
+          onMouseLeave={(e: KonvaEventObject<MouseEvent>) => setCursor(e, "default")}
+        />
+      </>
+    );
+  }
+
   return (
     <KonvaText
       x={x}
@@ -283,14 +367,8 @@ function TextRunNode({
       rotation={run.rotation ?? 0}
       onClick={onClick}
       onTap={onClick}
-      onMouseEnter={(e: KonvaEventObject<MouseEvent>) => {
-        const stage = e.target.getStage();
-        if (stage) stage.container().style.cursor = "text";
-      }}
-      onMouseLeave={(e: KonvaEventObject<MouseEvent>) => {
-        const stage = e.target.getStage();
-        if (stage) stage.container().style.cursor = "default";
-      }}
+      onMouseEnter={(e: KonvaEventObject<MouseEvent>) => setCursor(e, "text")}
+      onMouseLeave={(e: KonvaEventObject<MouseEvent>) => setCursor(e, "default")}
     />
   );
 }

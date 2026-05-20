@@ -62,6 +62,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--no-ocr",
+        action="store_true",
+        help="Import: skip OCR of scanned/rasterized pages (OCR is on by default).",
+    )
+    parser.add_argument(
         "--export",
         action="store_true",
         help="Export mode: input is a UDM JSON, output is a PDF",
@@ -101,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         assets_dir=args.assets_dir,
         assets_url_prefix=args.assets_url_prefix,
         source_url=args.source_url,
+        enable_ocr=not args.no_ocr,
     )
 
     if args.summary:

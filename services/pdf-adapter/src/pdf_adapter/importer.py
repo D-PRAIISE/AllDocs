@@ -54,6 +54,7 @@ def import_pdf(
     assets_dir: str | Path | None = None,
     assets_url_prefix: str = "",
     source_url: str | None = None,
+    enable_ocr: bool = True,
 ) -> dict[str, Any]:
     """Read a PDF file and produce a UDM v0.1.0 document.
 
@@ -68,6 +69,11 @@ def import_pdf(
     ``metadata.passthrough`` recording the URL and a content fingerprint.
     The exporter uses this to short-circuit re-rendering when the UDM
     hasn't been edited — see _passthrough.py.
+
+    If ``enable_ocr`` is True (default), pages that are effectively flat
+    images with no extractable text are OCR'd and the recognized lines
+    are added as a TextLayer of runs marked with ``ocr``. Requires
+    Tesseract; if it isn't installed, OCR is silently skipped.
 
     Returns a dict ready to be serialized as UDM JSON.
     """
@@ -85,6 +91,9 @@ def import_pdf(
 
         for page_idx, page in enumerate(doc):
             pages.append(_page_to_udm(page, page_idx + 1, fonts, images, doc))
+
+        if enable_ocr:
+            _apply_ocr(doc, pages, fonts)
 
         native_meta = doc.metadata or {}
 
@@ -133,6 +142,78 @@ def import_pdf(
         return udm
     finally:
         doc.close()
+
+
+def _apply_ocr(
+    doc: pymupdf.Document,
+    pages: list[dict[str, Any]],
+    fonts: dict[str, dict[str, Any]],
+) -> None:
+    """Detect scanned/rasterized pages, OCR them, and append the
+    recognized lines as a TextLayer of ``ocr``-marked runs.
+
+    No-op (silently) if Tesseract isn't available — OCR is a best-effort
+    enhancement, never a hard requirement for import.
+    """
+    from . import _ocr
+
+    if not _ocr.tesseract_available():
+        return
+
+    ocr_font_id: str | None = None
+
+    for page_idx, page in enumerate(doc):
+        if page_idx >= len(pages):
+            break
+        if not _ocr.is_scanned_page(page):
+            continue
+        try:
+            result = _ocr.ocr_page(page)
+        except RuntimeError:
+            continue
+        if not result.runs:
+            continue
+
+        if ocr_font_id is None:
+            ocr_font_id = f"font_{len(fonts):03d}"
+            # Synthetic font for OCR'd text — there is no real embedded
+            # font for recognized pixels. The exporter resolves this to a
+            # bundled sans family; the editor renders it the same way.
+            fonts["__ocr__"] = {
+                "id": ocr_font_id,
+                "family": "sans-serif",
+                "weight": 400,
+                "style": "normal",
+                "source": "substituted",
+                "_meta": {"ocr": True},
+            }
+
+        runs: list[dict[str, Any]] = []
+        for r in result.runs:
+            runs.append(
+                {
+                    "text": r.text,
+                    "font_id": ocr_font_id,
+                    "font_size": _length(r.font_size, "pt"),
+                    "color": {
+                        "literal": {
+                            "kind": "rgb",
+                            "r": r.color[0],
+                            "g": r.color[1],
+                            "b": r.color[2],
+                        }
+                    },
+                    "x": _length(r.x0, "pt"),
+                    "y": _length(r.y1, "pt"),
+                    "ocr": {"confidence": r.confidence, "engine": result.engine},
+                    # OCR runs have a known width (PositionedTextRun in UDM
+                    # only stores baseline x/y); the editor needs it to size
+                    # the clickable overlay. Stashed in _meta so it doesn't
+                    # require a UDM schema change.
+                    "_meta": {"ocr_width": round(r.x1 - r.x0, 2)},
+                }
+            )
+        pages[page_idx]["layers"].append({"type": "text", "runs": runs})
 
 
 def _extract_assets(

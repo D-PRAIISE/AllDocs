@@ -21,7 +21,9 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
-const SUBPROCESS_TIMEOUT_MS = 45_000;
+// OCR of scanned pages runs at import time (~6-8 s/page via Tesseract),
+// so the importer can legitimately take a while on multi-page scans.
+const SUBPROCESS_TIMEOUT_MS = 180_000;
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // PK\3\4 (DOCX/ODT/XLSX/PPTX)
 

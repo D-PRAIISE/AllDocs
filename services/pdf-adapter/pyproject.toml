@@ -8,6 +8,9 @@ readme = "README.md"
 dependencies = [
     "pymupdf>=1.27.0",
     "pillow>=11.0.0",
+    # OCR for scanned / rasterized pages. pytesseract is a thin wrapper —
+    # the Tesseract binary itself is a system dependency (see _ocr.py).
+    "pytesseract>=0.3.10",
 ]
 
 [project.scripts]
