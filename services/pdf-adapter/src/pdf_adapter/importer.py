@@ -206,11 +206,18 @@ def _apply_ocr(
                     "x": _length(r.x0, "pt"),
                     "y": _length(r.y1, "pt"),
                     "ocr": {"confidence": r.confidence, "engine": result.engine},
-                    # OCR runs have a known width (PositionedTextRun in UDM
-                    # only stores baseline x/y); the editor needs it to size
-                    # the clickable overlay. Stashed in _meta so it doesn't
-                    # require a UDM schema change.
-                    "_meta": {"ocr_width": round(r.x1 - r.x0, 2)},
+                    # _meta carries OCR bookkeeping that doesn't fit the UDM
+                    # PositionedTextRun schema (which only has baseline x/y):
+                    #   ocr_width — line width in pt, for the editor overlay
+                    #   ocr_text  — the originally recognized text, so the
+                    #               exporter can tell which runs were edited
+                    #   ocr_bg    — page background color, painted over the
+                    #               old pixels when an OCR run is edited
+                    "_meta": {
+                        "ocr_width": round(r.x1 - r.x0, 2),
+                        "ocr_text": r.text,
+                        "ocr_bg": list(r.bg_color),
+                    },
                 }
             )
         pages[page_idx]["layers"].append({"type": "text", "runs": runs})

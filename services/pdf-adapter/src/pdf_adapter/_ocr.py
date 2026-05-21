@@ -63,6 +63,9 @@ class OcrRun:
     confidence: float
     # 0..255 RGB sampled from the rendered page at the line centroid.
     color: tuple[int, int, int] = (0, 0, 0)
+    # 0..255 RGB of the page background around the line. The OCR-edit
+    # exporter paints this over the old pixels before drawing new text.
+    bg_color: tuple[int, int, int] = (255, 255, 255)
 
     @property
     def font_size(self) -> float:
@@ -179,7 +182,10 @@ def ocr_page(page: pymupdf.Page, dpi: int = OCR_DPI) -> OcrResult:
         px0, py0 = min(lefts), min(tops)
         px1, py1 = max(rights), max(bottoms)
 
-        color = _sample_color(img, (px0 + px1) // 2, (py0 + py1) // 2)
+        # Background first — the ink color is then derived as the dominant
+        # color in the line box that is *not* close to the background.
+        bg = _sample_background(img, px0, py0, px1, py1)
+        color = _sample_ink_color(img, px0, py0, px1, py1, bg)
 
         runs.append(
             OcrRun(
@@ -190,26 +196,94 @@ def ocr_page(page: pymupdf.Page, dpi: int = OCR_DPI) -> OcrResult:
                 y1=py1 * scale,
                 confidence=round(sum(confs) / len(confs) / 100.0, 4),
                 color=color,
+                bg_color=bg,
             )
         )
 
     return OcrResult(runs=runs, engine=_ENGINE_NAME)
 
 
-def _sample_color(img: Any, x: int, y: int) -> tuple[int, int, int]:
-    """Sample the rendered-page color at (x, y). Used as the OCR run's
-    text color so white-on-dark text doesn't render as invisible black.
+def _color_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2) ** 0.5
 
-    This samples the *line centroid*, which usually lands on a glyph or
-    in the gap between glyphs — close enough to pick text vs background
-    for the common case. A v0.2 improvement would sample the darkest
-    pixel in the line box to bias toward the ink color.
+
+def _sample_ink_color(
+    img: Any,
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    bg: tuple[int, int, int],
+) -> tuple[int, int, int]:
+    """Derive the text (ink) color of an OCR'd line.
+
+    A single centroid pixel is unreliable — it often lands in the gap
+    between glyphs and picks up the background (which is how white text
+    on a dark sidebar got sampled as dark, making edited text render
+    invisible). Instead: scan the line box, discard pixels close to the
+    background color, and return the most common color among the rest —
+    that's the ink.
     """
     try:
         w, h = img.size
-        px = img.getpixel((max(0, min(w - 1, x)), max(0, min(h - 1, y))))
-        if isinstance(px, tuple) and len(px) >= 3:
-            return (int(px[0]), int(px[1]), int(px[2]))
+        # Distance beyond which a pixel counts as "ink" rather than
+        # background. ~60 in RGB space cleanly separates glyph pixels
+        # from background + anti-aliasing fringe.
+        ink_threshold = 60.0
+        counts: dict[tuple[int, int, int], int] = {}
+        step = max(1, (x1 - x0) // 96)
+        for sx in range(max(0, x0), min(w, x1), step):
+            for sy in range(max(0, y0), min(h, y1)):
+                px = img.getpixel((sx, sy))
+                if not (isinstance(px, tuple) and len(px) >= 3):
+                    continue
+                key = (int(px[0]), int(px[1]), int(px[2]))
+                if _color_distance(key, bg) >= ink_threshold:
+                    counts[key] = counts.get(key, 0) + 1
+        if counts:
+            return max(counts.items(), key=lambda kv: kv[1])[0]
     except Exception:
         pass
-    return (0, 0, 0)
+    # No pixel stood out from the background — fall back to the color
+    # farthest from it (black for light bg, white for dark bg).
+    return (255, 255, 255) if sum(bg) < 384 else (0, 0, 0)
+
+
+def _sample_background(
+    img: Any, x0: int, y0: int, x1: int, y1: int
+) -> tuple[int, int, int]:
+    """Estimate the page background color around an OCR'd line.
+
+    Samples a thin horizontal strip in the inter-line gap just above the
+    line (falling back to just below it, then the line box itself) and
+    returns the most common color. The gap between lines is reliably
+    background, so its modal color is a good fill for covering the old
+    text pixels when an OCR run is edited.
+    """
+    try:
+        w, h = img.size
+        line_h = max(1, y1 - y0)
+        gap = max(2, line_h // 3)
+
+        for top, bot in (
+            (y0 - gap, y0 - 1),  # strip above the line
+            (y1 + 1, y1 + gap),  # strip below the line
+            (y0, y1),  # last resort: the line box itself
+        ):
+            top = max(0, top)
+            bot = min(h - 1, bot)
+            if bot < top:
+                continue
+            counts: dict[tuple[int, int, int], int] = {}
+            step = max(1, (x1 - x0) // 64)
+            for sx in range(max(0, x0), min(w, x1), step):
+                for sy in range(top, bot + 1):
+                    px = img.getpixel((sx, sy))
+                    if isinstance(px, tuple) and len(px) >= 3:
+                        key = (int(px[0]), int(px[1]), int(px[2]))
+                        counts[key] = counts.get(key, 0) + 1
+            if counts:
+                return max(counts.items(), key=lambda kv: kv[1])[0]
+    except Exception:
+        pass
+    return (255, 255, 255)

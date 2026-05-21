@@ -75,6 +75,12 @@ def try_patch_export(
 
     doc = pymupdf.open(str(source_path))
     try:
+        # OCR docs (scanned / rasterized — text sits over an image) take a
+        # separate path: there are no source text spans to redact, so we
+        # cover the old pixels and draw the new text on top.
+        if _udm_has_ocr_runs(udm):
+            return _patch_ocr_edits(udm, doc, output_path, base_dir)
+
         edits_by_page, fully_patchable = _diff_runs(udm, doc)
         if not fully_patchable:
             return False
@@ -98,6 +104,104 @@ def try_patch_export(
         return True
     finally:
         doc.close()
+
+
+def _udm_has_ocr_runs(udm: dict[str, Any]) -> bool:
+    for page in udm.get("content", {}).get("pages", []) or []:
+        for layer in page.get("layers", []):
+            if layer.get("type") != "text":
+                continue
+            for run in layer.get("runs", []):
+                if run.get("ocr"):
+                    return True
+    return False
+
+
+def _patch_ocr_edits(
+    udm: dict[str, Any],
+    doc: pymupdf.Document,
+    output_path: str | Path,
+    base_dir: Path,
+) -> bool:
+    """Burn edited OCR text into a scanned/rasterized PDF.
+
+    An OCR'd page is an image — there is no text in the content stream to
+    redact. For each OCR run whose text the user changed, we paint an
+    opaque rectangle (the sampled page background color) over the old
+    pixels, then draw the new text on top.
+
+    Returns True if at least one OCR run was edited and burned in; False
+    (fall through to render) if nothing changed.
+    """
+    edits_by_page = _diff_ocr_runs(udm)
+    if not edits_by_page:
+        return False
+
+    for page_idx, page_edits in edits_by_page.items():
+        if page_idx >= len(doc):
+            continue
+        page = doc[page_idx]
+        for e in page_edits:
+            page.draw_rect(e["cover_rect"], color=None, fill=e["bg_color"])
+            _insert_replacement(page, e, udm, base_dir)
+
+    doc.save(str(output_path), garbage=4, deflate=True, clean=True)
+    return True
+
+
+def _diff_ocr_runs(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    """Find OCR runs whose text differs from what was originally
+    recognized (``_meta.ocr_text``). Returns patch metadata per page."""
+    from collections import defaultdict
+
+    edits: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    pages = udm.get("content", {}).get("pages") or []
+
+    for page_idx, page in enumerate(pages):
+        for layer in page.get("layers", []):
+            if layer.get("type") != "text":
+                continue
+            for run in layer.get("runs", []):
+                if not run.get("ocr"):
+                    continue
+                meta = run.get("_meta") or {}
+                original = meta.get("ocr_text")
+                current = run.get("text", "")
+                if original is None or original == current:
+                    continue  # unedited
+
+                x = float(run["x"]["value"])
+                y = float(run["y"]["value"])  # baseline (line bottom)
+                fs = float(run["font_size"]["value"])
+                width = float(meta.get("ocr_width") or (len(current) * fs * 0.5))
+                bg = meta.get("ocr_bg") or [255, 255, 255]
+
+                # Pad the cover rect so anti-aliased glyph edges of the old
+                # text are fully hidden. Extend right far enough to also
+                # cover a longer replacement string.
+                pad = fs * 0.18
+                est_new_width = len(current) * fs * 0.55
+                cover_w = max(width, est_new_width) + pad * 2
+                cover_rect = pymupdf.Rect(
+                    x - pad,
+                    y - fs - pad,
+                    x - pad + cover_w,
+                    y + pad,
+                )
+
+                edits[page_idx].append(
+                    {
+                        "cover_rect": cover_rect,
+                        "bg_color": (bg[0] / 255.0, bg[1] / 255.0, bg[2] / 255.0),
+                        "new_text": current,
+                        "baseline": (x, y),
+                        "font_size": fs,
+                        "color": run.get("color") or {},
+                        "font_id": run.get("font_id"),
+                    }
+                )
+
+    return dict(edits)
 
 
 def _diff_runs(
