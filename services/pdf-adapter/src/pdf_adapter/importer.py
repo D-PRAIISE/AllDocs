@@ -317,20 +317,19 @@ def _page_to_udm(
     if text_runs:
         layers.append({"type": "text", "runs": text_runs})
 
-    for img_info in page.get_images(full=True):
-        xref = img_info[0]
+    for xref, rect, opacity in _image_placements(page, doc):
         image_id = _ensure_image(images, xref, doc)
-        for rect in page.get_image_rects(xref):
-            layers.append(
-                {
-                    "type": "image",
-                    "image_id": image_id,
-                    "x": _length(rect.x0, "pt"),
-                    "y": _length(rect.y0, "pt"),
-                    "width": _length(rect.width, "pt"),
-                    "height": _length(rect.height, "pt"),
-                }
-            )
+        layer: dict[str, Any] = {
+            "type": "image",
+            "image_id": image_id,
+            "x": _length(rect.x0, "pt"),
+            "y": _length(rect.y0, "pt"),
+            "width": _length(rect.width, "pt"),
+            "height": _length(rect.height, "pt"),
+        }
+        if opacity < 1.0:
+            layer["opacity"] = opacity
+        layers.append(layer)
 
     # Vector drawings — filled/stroked rectangles capture page backgrounds and
     # column dividers that Canva and other design tools rely on. v0.1 captures
@@ -344,6 +343,114 @@ def _page_to_udm(
         "height": _length(page.rect.height, "pt"),
         "layers": layers,
     }
+
+
+def _image_placements(
+    page: pymupdf.Page,
+    doc: pymupdf.Document,
+) -> list[tuple[int, pymupdf.Rect, float]]:
+    """Return (xref, rect, opacity) for every image placement on the page.
+
+    ``page.get_image_rects`` only finds images placed directly in the
+    page content stream. Images placed *through a Form XObject* — a
+    very common pattern for watermarks and logos (the page does
+    ``<matrix> cm /Form Do`` and the image lives inside the form) — are
+    missed entirely.
+
+    ``page.get_bboxlog`` does report every painted image including
+    nested ones, but only as a bbox, with no xref. So: take the direct
+    rects from ``get_image_rects``, then add any ``fill-image`` bbox
+    from the bboxlog that isn't already one of them. A nested placement
+    can be attributed to a specific image only when the page has a
+    single image resource — which is the case for the watermark/logo
+    pattern. Multi-image nested attribution is left for v0.2.
+
+    Nested placements also pick up the page's minimum gs fill-alpha as
+    their opacity — watermarks are drawn faint via an ExtGState ``ca``
+    (e.g. ``.08``), and without that they'd render fully opaque.
+    """
+    xrefs = [img[0] for img in page.get_images(full=True)]
+    placements: list[tuple[int, pymupdf.Rect, float]] = []
+    direct: list[pymupdf.Rect] = []
+
+    for xref in xrefs:
+        for rect in page.get_image_rects(xref):
+            placements.append((xref, rect, 1.0))
+            direct.append(rect)
+
+    try:
+        bboxlog = page.get_bboxlog()
+    except Exception:
+        bboxlog = []
+
+    nested: list[pymupdf.Rect] = []
+    for kind, rect in bboxlog:
+        if "image" not in kind.lower():
+            continue
+        r = pymupdf.Rect(rect)
+        if r.is_empty or r.is_infinite:
+            continue
+        if any(_rects_close(r, d) for d in direct):
+            continue
+        if any(_rects_close(r, n) for n in nested):
+            continue
+        nested.append(r)
+
+    if nested and len(xrefs) == 1:
+        opacity = _page_min_gs_alpha(page, doc)
+        for r in nested:
+            placements.append((xrefs[0], r, opacity))
+
+    return placements
+
+
+def _page_min_gs_alpha(page: pymupdf.Page, doc: pymupdf.Document) -> float:
+    """Lowest fill-alpha (``ca``) of any ExtGState actually invoked via a
+    ``gs`` operator in the page content. Returns 1.0 if none — i.e. the
+    common case of opaque content.
+
+    This is how the faint-watermark effect is encoded: the page defines
+    an ExtGState like ``/gRLs0 <</ca .08>>`` and does ``/gRLs0 gs``
+    before drawing the watermark image.
+    """
+    import re
+
+    try:
+        res = doc.xref_get_key(page.xref, "Resources")
+        content = page.read_contents().decode("latin-1", "replace")
+    except Exception:
+        return 1.0
+
+    res_str = res[1] if isinstance(res, tuple) and len(res) > 1 else ""
+    if not res_str:
+        return 1.0
+
+    # ExtGState entry -> ca value, e.g. /gRLs0<</ca .08>>. The [^<>]
+    # class is deliberate: it stops the match from crossing into a
+    # nested dict, so the captured name is the gs entry, not /ExtGState.
+    name_to_ca: dict[str, float] = {}
+    for m in re.finditer(r"/([A-Za-z0-9]+)\s*<<[^<>]*?/ca\s+([0-9.]+)", res_str):
+        try:
+            name_to_ca[m.group(1)] = float(m.group(2))
+        except ValueError:
+            continue
+    if not name_to_ca:
+        return 1.0
+
+    invoked = set(re.findall(r"/([A-Za-z0-9]+)\s+gs\b", content))
+    alphas = [name_to_ca[n] for n in invoked if n in name_to_ca]
+    if not alphas:
+        return 1.0
+    return max(0.0, min(1.0, min(alphas)))
+
+
+def _rects_close(a: pymupdf.Rect, b: pymupdf.Rect, tol: float = 1.0) -> bool:
+    return (
+        abs(a.x0 - b.x0) <= tol
+        and abs(a.y0 - b.y0) <= tol
+        and abs(a.x1 - b.x1) <= tol
+        and abs(a.y1 - b.y1) <= tol
+    )
 
 
 def _shape_layers_from_drawings(page: pymupdf.Page) -> list[dict[str, Any]]:
