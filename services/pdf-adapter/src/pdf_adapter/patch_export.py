@@ -75,16 +75,32 @@ def try_patch_export(
 
     doc = pymupdf.open(str(source_path))
     try:
+        # Image swaps are orthogonal to text edits — a UDM image resource
+        # whose data_ref became a data: URL means the user replaced it.
+        image_swaps = _diff_image_resources(udm)
+
         # OCR docs (scanned / rasterized — text sits over an image) take a
         # separate path: there are no source text spans to redact, so we
         # cover the old pixels and draw the new text on top.
         if _udm_has_ocr_runs(udm):
-            return _patch_ocr_edits(udm, doc, output_path, base_dir)
+            ocr_edits = _diff_ocr_runs(udm)
+            if not ocr_edits and not image_swaps:
+                return False
+            for page_idx, page_edits in ocr_edits.items():
+                if page_idx >= len(doc):
+                    continue
+                page = doc[page_idx]
+                for e in page_edits:
+                    page.draw_rect(e["cover_rect"], color=None, fill=e["bg_color"])
+                    _insert_replacement(page, e, udm, base_dir)
+            _apply_image_swaps(doc, image_swaps)
+            doc.save(str(output_path), garbage=4, deflate=True, clean=True)
+            return True
 
         edits_by_page, fully_patchable = _diff_runs(udm, doc)
         if not fully_patchable:
             return False
-        if not edits_by_page:
+        if not edits_by_page and not image_swaps:
             # No edits to apply but fingerprint differs (otherwise passthrough
             # would have fired). Treat as fall-through to render.
             return False
@@ -100,6 +116,7 @@ def try_patch_export(
             for e in page_edits:
                 _insert_replacement(page, e, udm, base_dir)
 
+        _apply_image_swaps(doc, image_swaps)
         doc.save(str(output_path), garbage=4, deflate=True, clean=True)
         return True
     finally:
@@ -117,36 +134,57 @@ def _udm_has_ocr_runs(udm: dict[str, Any]) -> bool:
     return False
 
 
-def _patch_ocr_edits(
-    udm: dict[str, Any],
-    doc: pymupdf.Document,
-    output_path: str | Path,
-    base_dir: Path,
-) -> bool:
-    """Burn edited OCR text into a scanned/rasterized PDF.
+def _diff_image_resources(udm: dict[str, Any]) -> list[tuple[int, bytes]]:
+    """Find image resources the user replaced in the editor.
 
-    An OCR'd page is an image — there is no text in the content stream to
-    redact. For each OCR run whose text the user changed, we paint an
-    opaque rectangle (the sampled page background color) over the old
-    pixels, then draw the new text on top.
-
-    Returns True if at least one OCR run was edited and burned in; False
-    (fall through to render) if nothing changed.
+    A replaced image has a ``data:`` URL as its ``data_ref`` (the editor
+    reads the picked file as a data URL). Its ``_meta.xref`` is the
+    source PDF image XObject to overwrite. Returns (xref, image_bytes).
     """
-    edits_by_page = _diff_ocr_runs(udm)
-    if not edits_by_page:
-        return False
+    import base64
 
-    for page_idx, page_edits in edits_by_page.items():
-        if page_idx >= len(doc):
+    swaps: list[tuple[int, bytes]] = []
+    for img in (udm.get("resources") or {}).get("images", []) or []:
+        data_ref = str(img.get("data_ref") or "")
+        if not data_ref.startswith("data:"):
             continue
-        page = doc[page_idx]
-        for e in page_edits:
-            page.draw_rect(e["cover_rect"], color=None, fill=e["bg_color"])
-            _insert_replacement(page, e, udm, base_dir)
+        xref = (img.get("_meta") or {}).get("xref")
+        if not xref:
+            continue
+        comma = data_ref.find(",")
+        if comma < 0:
+            continue
+        try:
+            raw = base64.b64decode(data_ref[comma + 1 :])
+        except Exception:
+            continue
+        if raw:
+            swaps.append((int(xref), raw))
+    return swaps
 
-    doc.save(str(output_path), garbage=4, deflate=True, clean=True)
-    return True
+
+def _apply_image_swaps(doc: pymupdf.Document, swaps: list[tuple[int, bytes]]) -> None:
+    """Overwrite source image XObjects in place. Every placement of the
+    xref (e.g. a logo used on multiple pages) updates at once — which is
+    the desired behavior for a resource-level swap."""
+    for xref, raw in swaps:
+        try:
+            page = _page_using_xref(doc, xref)
+            page.replace_image(xref, stream=raw)
+        except Exception:
+            # A bad xref or unsupported image — skip rather than abort the
+            # whole export; other patches still apply.
+            continue
+
+
+def _page_using_xref(doc: pymupdf.Document, xref: int) -> pymupdf.Page:
+    """Return a page that references ``xref`` as an image (replace_image
+    is a Page method). Falls back to page 0."""
+    for page in doc:
+        for img in page.get_images(full=True):
+            if img[0] == xref:
+                return page
+    return doc[0]
 
 
 def _diff_ocr_runs(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:

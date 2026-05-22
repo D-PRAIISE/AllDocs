@@ -28,7 +28,10 @@ export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 const SUBPROCESS_TIMEOUT_MS = 45_000;
-const MAX_POST_BYTES = 10 * 1024 * 1024;
+// 32 MB: a replaced image is embedded in the UDM as a base64 data URL
+// (~4/3 of the file size), so the POST body can be substantially larger
+// than a plain UDM document.
+const MAX_POST_BYTES = 32 * 1024 * 1024;
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const url = new URL(req.url);

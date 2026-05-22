@@ -597,5 +597,8 @@ def _ensure_image(
         "width": info["width"],
         "height": info["height"],
         "data_ref": f"xref:{xref}",
+        # Source PDF image XObject xref. The patch exporter needs it to
+        # replace this image in place when the user swaps it in the editor.
+        "_meta": {"xref": xref},
     }
     return image_id

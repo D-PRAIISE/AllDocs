@@ -93,6 +93,47 @@ function runKey(pageIdx: number, layerIdx: number, runIdx: number): string {
   return `${pageIdx}:${layerIdx}:${runIdx}`;
 }
 
+interface PickedImage {
+  dataUrl: string;
+  width: number;
+  height: number;
+  format: string;
+}
+
+/** Open a native file picker and read the chosen image as a data URL. */
+function pickImageFile(): Promise<PickedImage | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = reader.result as string;
+        const probe = new window.Image();
+        probe.onload = () => {
+          resolve({
+            dataUrl,
+            width: probe.naturalWidth,
+            height: probe.naturalHeight,
+            format: (file.type.split("/")[1] || "png").toLowerCase(),
+          });
+        };
+        probe.onerror = () => resolve(null);
+        probe.src = dataUrl;
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  });
+}
+
 export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasProps) {
   const fixed = doc.content as FixedContent;
   const [scale, setScale] = useState(1);
@@ -112,6 +153,24 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       if (run.text === nextText) return;
       run.text = nextText;
       setEditedKeys((prev) => new Set(prev).add(runKey(pageIdx, layerIdx, runIdx)));
+      onChange(next);
+    },
+    [doc, onChange]
+  );
+
+  const replaceImage = useCallback(
+    async (imageId: string) => {
+      const picked = await pickImageFile();
+      if (!picked) return;
+      const next = structuredClone(doc) as Document;
+      const resource = next.resources.images.find((i) => i.id === imageId);
+      if (!resource) return;
+      // data: URL travels in the UDM; the exporter decodes it and calls
+      // page.replace_image on the source xref recorded in _meta.xref.
+      resource.data_ref = picked.dataUrl;
+      resource.width = picked.width;
+      resource.height = picked.height;
+      resource.format = picked.format as typeof resource.format;
       onChange(next);
     },
     [doc, onChange]
@@ -139,6 +198,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
                 updateRun(state.pageIdx, state.layerIdx, state.runIdx, text);
                 setEditing(null);
               }}
+              onReplaceImage={replaceImage}
             />
           </div>
         ))}
@@ -154,6 +214,10 @@ interface EditingState {
   initialText: string;
 }
 
+// Image layers smaller than this (PDF points, either dimension) don't get a
+// replace button — bullet glyphs and icon-sized images would just be noise.
+const MIN_REPLACEABLE_PT = 48;
+
 function FixedPageEditor({
   page,
   pageIdx,
@@ -164,6 +228,7 @@ function FixedPageEditor({
   onStartEdit,
   onCancelEdit,
   onCommitEdit,
+  onReplaceImage,
 }: {
   page: Page;
   pageIdx: number;
@@ -174,6 +239,7 @@ function FixedPageEditor({
   onStartEdit: (s: EditingState) => void;
   onCancelEdit: () => void;
   onCommitEdit: (s: EditingState, text: string) => void;
+  onReplaceImage: (imageId: string) => void;
 }) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
@@ -228,7 +294,54 @@ function FixedPageEditor({
           onCancel={onCancelEdit}
         />
       ) : null}
+      <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
     </div>
+  );
+}
+
+function ImageReplaceButtons({
+  page,
+  scale,
+  onReplaceImage,
+}: {
+  page: Page;
+  scale: number;
+  onReplaceImage: (imageId: string) => void;
+}) {
+  // One button per image resource per page, only for images big enough
+  // to be worth replacing (skip bullet glyphs / icons).
+  const seen = new Set<string>();
+  const buttons: { imageId: string; left: number; top: number }[] = [];
+  for (const layer of page.layers) {
+    if (layer.type !== "image") continue;
+    const wPt = layer.width.unit === "pt" ? layer.width.value : lengthToPx(layer.width) / (96 / 72);
+    const hPt = layer.height.unit === "pt" ? layer.height.value : lengthToPx(layer.height) / (96 / 72);
+    if (wPt < MIN_REPLACEABLE_PT || hPt < MIN_REPLACEABLE_PT) continue;
+    if (seen.has(layer.image_id)) continue;
+    seen.add(layer.image_id);
+    buttons.push({
+      imageId: layer.image_id,
+      left: Math.max(2, lengthToPx(layer.x) * scale + 4),
+      top: Math.max(2, lengthToPx(layer.y) * scale + 4),
+    });
+  }
+  if (!buttons.length) return null;
+  return (
+    <>
+      {buttons.map((b) => (
+        <button
+          key={b.imageId}
+          onClick={() => onReplaceImage(b.imageId)}
+          title={`Replace ${b.imageId}`}
+          className="absolute z-10 font-mono text-[0.6rem] uppercase tracking-wider px-1.5 py-0.5
+                     bg-accent text-accent-fg border border-accent
+                     hover:brightness-110 transition"
+          style={{ left: b.left, top: b.top }}
+        >
+          ⟳ image
+        </button>
+      ))}
+    </>
   );
 }
 

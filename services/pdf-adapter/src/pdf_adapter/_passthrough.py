@@ -38,6 +38,8 @@ def compute_fingerprint(udm: dict[str, Any]) -> str:
       - Text content of any run, in order
       - image_id of any image layer, in order
       - Count of each layer type per page
+      - data_ref of any image resource (so swapping an image's bytes
+        invalidates passthrough and routes to the patch exporter)
     """
     h = hashlib.sha256()
 
@@ -61,6 +63,13 @@ def compute_fingerprint(udm: dict[str, Any]) -> str:
                 h.update(f"s:{geom.get('kind', '')}\n".encode())
         for k in sorted(layer_counts):
             h.update(f"c:{k}={layer_counts[k]}\n".encode())
+
+    # Image resource data_refs: an image swap keeps the same image_id and
+    # layer counts (so the per-page hashing above wouldn't notice), but
+    # the resource's data_ref changes to a data: URL. Hash it here so the
+    # swap invalidates passthrough.
+    for img in (udm.get("resources") or {}).get("images", []) or []:
+        h.update(f"r:{img.get('id', '')}={img.get('data_ref', '')}\n".encode("utf-8"))
 
     return h.hexdigest()[:16]
 
