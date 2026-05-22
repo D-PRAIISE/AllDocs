@@ -55,7 +55,15 @@ def compute_fingerprint(udm: dict[str, Any]) -> str:
             layer_counts[t] = layer_counts.get(t, 0) + 1
             if t == "text":
                 for run in layer.get("runs", []):
-                    h.update(f"t:{run.get('text', '')}\n".encode("utf-8"))
+                    # Text + formatting: a size/bold change with the same
+                    # string must still invalidate passthrough so the
+                    # patch exporter re-renders the run.
+                    size = (run.get("font_size") or {}).get("value", "")
+                    h.update(
+                        f"t:{run.get('text', '')}|f:{run.get('font_id', '')}|s:{size}\n".encode(
+                            "utf-8"
+                        )
+                    )
             elif t == "image":
                 h.update(f"i:{layer.get('image_id', '')}\n".encode())
             elif t == "shape":

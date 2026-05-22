@@ -10,6 +10,7 @@ import {
   type FixedContent,
   type FontResource,
   type ImageLayer as UdmImageLayer,
+  type Length,
   type Page,
   type PositionedTextRun,
   type ShapeLayer as UdmShapeLayer,
@@ -17,6 +18,64 @@ import {
   colorRefToCss,
   lengthToPx,
 } from "@/lib/udm";
+
+type FamilyClass = "sans" | "serif" | "mono";
+
+/** What a text edit commits: the new string plus its formatting. */
+interface EditCommit {
+  text: string;
+  sizePt: number;
+  bold: boolean;
+  family: FamilyClass;
+}
+
+const FAMILY_NAME: Record<FamilyClass, string> = {
+  sans: "sans-serif",
+  serif: "serif",
+  mono: "monospace",
+};
+
+const FAMILY_CSS: Record<FamilyClass, string> = {
+  sans: "ui-sans-serif, system-ui, sans-serif",
+  serif: "ui-serif, Georgia, 'Times New Roman', serif",
+  mono: "ui-monospace, 'Courier New', monospace",
+};
+
+/** UDM Length -> PDF points. */
+function lengthToPt(len: Length): number {
+  return len.unit === "pt" ? len.value : (lengthToPx(len) * 72) / 96;
+}
+
+/** Classify a FontResource into sans / serif / mono — mirrors the
+ * Python classify_family (sans wins over the "serif" substring). */
+function familyClassOf(font: FontResource | undefined): FamilyClass {
+  const f = (font?.family ?? "").toLowerCase();
+  if (/mono|courier|consol|menlo|monaco/.test(f)) return "mono";
+  if (f.includes("sans")) return "sans";
+  if (/serif|times|georgia|garamond|cambria/.test(f)) return "serif";
+  return "sans";
+}
+
+/** Find or create a substituted FontResource for (family, weight) on a
+ * mutable doc clone. Returns its id. */
+function ensureFont(doc: Document, family: FamilyClass, weight: number): string {
+  const familyName = FAMILY_NAME[family];
+  const existing = doc.resources.fonts.find(
+    (f) => f.family === familyName && f.weight === weight && f.style === "normal"
+  );
+  if (existing) return existing.id;
+  const id = `font_user_${family}_${weight}`;
+  if (!doc.resources.fonts.some((f) => f.id === id)) {
+    doc.resources.fonts.push({
+      id,
+      family: familyName,
+      weight,
+      style: "normal",
+      source: "substituted",
+    });
+  }
+  return id;
+}
 
 interface FixedEditorCanvasProps {
   doc: Document;
@@ -144,14 +203,18 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   const [editedKeys, setEditedKeys] = useState<ReadonlySet<string>>(new Set());
 
   const updateRun = useCallback(
-    (pageIdx: number, layerIdx: number, runIdx: number, nextText: string) => {
+    (pageIdx: number, layerIdx: number, runIdx: number, commit: EditCommit) => {
       const next = structuredClone(doc) as Document;
       const content = next.content as FixedContent;
       const layer = content.pages[pageIdx]!.layers[layerIdx]!;
       if (layer.type !== "text") return;
       const run = layer.runs[runIdx]!;
-      if (run.text === nextText) return;
-      run.text = nextText;
+      run.text = commit.text;
+      run.font_size = { value: commit.sizePt, unit: "pt" };
+      // Bold + family are expressed by pointing the run at a substituted
+      // FontResource of the right weight/family. The exporters resolve
+      // font_id -> FontResource -> a bundled metric-compatible font.
+      run.font_id = ensureFont(next, commit.family, commit.bold ? 700 : 400);
       setEditedKeys((prev) => new Set(prev).add(runKey(pageIdx, layerIdx, runIdx)));
       onChange(next);
     },
@@ -194,8 +257,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               editedKeys={editedKeys}
               onStartEdit={setEditing}
               onCancelEdit={() => setEditing(null)}
-              onCommitEdit={(state, text) => {
-                updateRun(state.pageIdx, state.layerIdx, state.runIdx, text);
+              onCommitEdit={(state, commit) => {
+                updateRun(state.pageIdx, state.layerIdx, state.runIdx, commit);
                 setEditing(null);
               }}
               onReplaceImage={replaceImage}
@@ -238,7 +301,7 @@ function FixedPageEditor({
   editedKeys: ReadonlySet<string>;
   onStartEdit: (s: EditingState) => void;
   onCancelEdit: () => void;
-  onCommitEdit: (s: EditingState, text: string) => void;
+  onCommitEdit: (s: EditingState, commit: EditCommit) => void;
   onReplaceImage: (imageId: string) => void;
 }) {
   const w = lengthToPx(page.width) * scale;
@@ -580,6 +643,15 @@ function ShapeNode({ layer, scale }: { layer: UdmShapeLayer; scale: number }) {
   );
 }
 
+/** rgb() background for masking an OCR run's stale pixels. */
+function ocrBgCss(run: PositionedTextRun): string {
+  const bg = run._meta?.ocr_bg;
+  if (Array.isArray(bg) && bg.length >= 3) {
+    return `rgb(${bg[0]},${bg[1]},${bg[2]})`;
+  }
+  return "#ffffff";
+}
+
 function TextEditOverlay({
   state,
   page,
@@ -592,7 +664,7 @@ function TextEditOverlay({
   page: Page;
   doc: Document;
   scale: number;
-  onCommit: (s: EditingState, text: string) => void;
+  onCommit: (s: EditingState, commit: EditCommit) => void;
   onCancel: () => void;
 }) {
   const layer = page.layers[state.layerIdx];
@@ -602,12 +674,16 @@ function TextEditOverlay({
   // re-rendering the contentEditable (which would clobber the caret).
   const valueRef = useRef(state.initialText);
 
+  const initialFont = run ? doc.resources.fonts.find((f) => f.id === run.font_id) : undefined;
+  const [bold, setBold] = useState((initialFont?.weight ?? 400) >= 600);
+  const [family, setFamily] = useState<FamilyClass>(familyClassOf(initialFont));
+  const [sizePt, setSizePt] = useState(run ? Math.round(lengthToPt(run.font_size)) : 12);
+
   useEffect(() => {
     const el = spanRef.current;
     if (!el) return;
     el.textContent = state.initialText;
     valueRef.current = state.initialText;
-    // Focus + select-all so the user can immediately type to replace.
     queueMicrotask(() => {
       el.focus();
       const range = document.createRange();
@@ -618,59 +694,142 @@ function TextEditOverlay({
     });
   }, [state.initialText, state.pageIdx, state.layerIdx, state.runIdx]);
 
-  const style = useMemo(() => {
+  const geom = useMemo(() => {
     if (!run) return null;
-    const font = doc.resources.fonts.find((f) => f.id === run.font_id);
     const x = lengthToPx(run.x) * scale;
     const y = lengthToPx(run.y) * scale;
-    const fontSize = lengthToPx(run.font_size) * scale;
-    const top = y - fontSize * BASELINE_TO_TOP;
-    return {
-      position: "absolute" as const,
-      left: x,
-      top,
-      fontSize,
-      lineHeight: 1,
-      fontFamily: konvaFontFamily(font),
-      fontWeight: font?.weight ?? 400,
-      fontStyle: font?.style ?? "normal",
-      color: colorRefToCss(run.color, doc.resources),
-      // Transparent so adjacent runs on the same visual line remain readable
-      // while the user edits. The outline alone marks the editing zone.
-      background: "transparent",
-      outline: "1px solid var(--color-accent, #fcc46a)",
-      outlineOffset: "1px",
-      padding: 0,
-      margin: 0,
-      border: 0,
-      whiteSpace: "pre" as const,
-      display: "inline-block",
-      caretColor: "var(--color-accent, #fcc46a)",
-    } satisfies CSSProperties;
-  }, [run, doc.resources, scale]);
+    const liveFs = sizePt * (96 / 72) * scale; // px at the chosen size
+    const top = y - liveFs * BASELINE_TO_TOP;
+    // The mask covers the *original* footprint, sized from the run's
+    // stored size — it must not shrink when the user picks a smaller size.
+    const origFs = lengthToPx(run.font_size) * scale;
+    const origTop = y - origFs * BASELINE_TO_TOP;
+    const widthPt =
+      run._meta?.ocr_width ?? lengthToPt(run.font_size) * Math.max(run.text.length, 1) * 0.5;
+    const maskW = widthPt * (96 / 72) * scale;
+    return { x, top, liveFs, origTop, origFs, maskW };
+  }, [run, scale, sizePt]);
 
-  if (!run || !style) return null;
+  if (!run || !geom) return null;
+
+  const commit = () => onCommit(state, { text: valueRef.current, sizePt, bold, family });
+
+  const spanStyle: CSSProperties = {
+    position: "absolute",
+    left: geom.x,
+    top: geom.top,
+    fontSize: geom.liveFs,
+    lineHeight: 1,
+    fontFamily: FAMILY_CSS[family],
+    fontWeight: bold ? 700 : 400,
+    color: colorRefToCss(run.color, doc.resources),
+    background: "transparent",
+    outline: "1px solid var(--color-accent, #fcc46a)",
+    outlineOffset: "1px",
+    padding: 0,
+    margin: 0,
+    border: 0,
+    whiteSpace: "pre",
+    display: "inline-block",
+    caretColor: "var(--color-accent, #fcc46a)",
+  };
+
+  // Toolbar sits above the edit box, or below it if there's no room.
+  const toolbarTop = geom.top >= 32 ? geom.top - 30 : geom.top + geom.liveFs + 6;
+  // Suppress mousedown focus-steal so toolbar clicks don't blur (commit) the span.
+  const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
   return (
-    <span
-      ref={spanRef}
-      contentEditable
-      suppressContentEditableWarning
-      onInput={(e) => {
-        valueRef.current = e.currentTarget.textContent ?? "";
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          onCommit(state, valueRef.current);
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-      }}
-      onBlur={() => onCommit(state, valueRef.current)}
-      style={style}
-    />
+    <>
+      {run.ocr ? (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: geom.x - geom.origFs * 0.15,
+            top: geom.origTop - geom.origFs * 0.15,
+            width: geom.maskW + geom.origFs * 0.3,
+            height: geom.origFs * 1.3,
+            background: ocrBgCss(run),
+            pointerEvents: "none",
+          }}
+        />
+      ) : null}
+
+      <div
+        className="absolute z-20 flex items-center gap-0.5 border border-border bg-surface px-1 py-0.5 shadow-lg"
+        style={{ left: geom.x, top: toolbarTop }}
+      >
+        <button
+          onMouseDown={keepFocus}
+          onClick={() => setBold((b) => !b)}
+          title="Bold"
+          className={`font-mono text-xs font-bold w-6 h-6 border ${
+            bold
+              ? "bg-accent text-accent-fg border-accent"
+              : "bg-transparent text-muted border-border hover:text-fg"
+          }`}
+        >
+          B
+        </button>
+        <div className="flex items-center border border-border ml-1">
+          <button
+            onMouseDown={keepFocus}
+            onClick={() => setSizePt((s) => Math.max(4, s - 1))}
+            className="font-mono text-xs w-5 h-6 text-muted hover:text-fg"
+          >
+            −
+          </button>
+          <span className="font-mono text-[0.65rem] w-7 text-center text-fg tabular-nums">
+            {sizePt}
+          </span>
+          <button
+            onMouseDown={keepFocus}
+            onClick={() => setSizePt((s) => Math.min(300, s + 1))}
+            className="font-mono text-xs w-5 h-6 text-muted hover:text-fg"
+          >
+            +
+          </button>
+        </div>
+        <div className="flex items-center ml-1">
+          {(["sans", "serif", "mono"] as FamilyClass[]).map((fc) => (
+            <button
+              key={fc}
+              onMouseDown={keepFocus}
+              onClick={() => setFamily(fc)}
+              title={FAMILY_NAME[fc]}
+              className={`font-mono text-[0.6rem] uppercase px-1.5 h-6 border ${
+                family === fc
+                  ? "bg-accent text-accent-fg border-accent"
+                  : "bg-transparent text-muted border-border hover:text-fg"
+              }`}
+            >
+              {fc[0]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <span
+        ref={spanRef}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={(e) => {
+          valueRef.current = e.currentTarget.textContent ?? "";
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          }
+        }}
+        onBlur={commit}
+        style={spanStyle}
+      />
+    </>
   );
 }
 

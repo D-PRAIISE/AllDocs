@@ -62,6 +62,12 @@ def classify_family(family: str) -> str:
     for pat in _MONO_PATTERNS:
         if pat in lower:
             return "mono"
+    # "sans" must be checked before the serif patterns: the generic CSS
+    # name "sans-serif" (and "sans serif") contains the substring
+    # "serif", so a naive serif scan misclassifies every sans font —
+    # which is how OCR-inserted text rendered in a Times-like serif.
+    if "sans" in lower:
+        return "sans"
     for pat in _SERIF_PATTERNS:
         if pat in lower:
             return "serif"
