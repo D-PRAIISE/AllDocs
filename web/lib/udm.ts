@@ -133,6 +133,9 @@ export interface Page {
   background?: ColorRef | { image_id: string };
   layers: Layer[];
   flow_projection?: FlowContent;
+  /** Page rotation in degrees (0/90/180/270). */
+  rotation?: number;
+  _meta?: { source_page?: number; [k: string]: unknown };
 }
 
 export type Layer = TextLayer | ImageLayer | ShapeLayer | AnnotationLayer | FormLayer;

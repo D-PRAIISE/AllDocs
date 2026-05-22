@@ -48,7 +48,12 @@ def compute_fingerprint(udm: dict[str, Any]) -> str:
     h.update(f"pc:{len(pages)}\n".encode())
 
     for page in pages:
-        h.update(f"p:{page.get('number', '?')}\n".encode())
+        # number + rotation + source index: any page-structure change
+        # (reorder, delete, insert, rotate) flips the fingerprint.
+        src = (page.get("_meta") or {}).get("source_page", "")
+        h.update(
+            f"p:{page.get('number', '?')}|rot:{page.get('rotation', 0)}|src:{src}\n".encode()
+        )
         layer_counts: dict[str, int] = {}
         for layer in page.get("layers", []):
             t = layer.get("type", "")

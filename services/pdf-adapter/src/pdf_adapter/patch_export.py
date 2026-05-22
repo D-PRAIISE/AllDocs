@@ -74,7 +74,18 @@ def try_patch_export(
         return False
 
     doc = pymupdf.open(str(source_path))
+    rebuilt: pymupdf.Document | None = None
     try:
+        # Page operations (reorder / delete / insert / rotate) rebuild the
+        # document: a fresh doc with the source pages copied in UDM order
+        # (insert_pdf preserves each page verbatim) plus any blank inserts
+        # and rotations. After the rebuild, output page i corresponds to
+        # UDM page i, so the content-patch logic below works unchanged.
+        page_ops = _page_ops_needed(udm, doc)
+        if page_ops:
+            rebuilt = _rebuild_pages(doc, udm)
+        work = rebuilt if rebuilt is not None else doc
+
         # Image swaps are orthogonal to text edits — a UDM image resource
         # whose data_ref became a data: URL means the user replaced it.
         image_swaps = _diff_image_resources(udm)
@@ -84,23 +95,26 @@ def try_patch_export(
         # cover the old pixels and draw the new text on top.
         if _udm_has_ocr_runs(udm):
             ocr_edits = _diff_ocr_runs(udm)
-            if not ocr_edits and not image_swaps:
+            if not ocr_edits and not image_swaps and not page_ops:
                 return False
             for page_idx, page_edits in ocr_edits.items():
-                if page_idx >= len(doc):
+                if page_idx >= len(work):
                     continue
-                page = doc[page_idx]
+                page = work[page_idx]
                 for e in page_edits:
                     page.draw_rect(e["cover_rect"], color=None, fill=e["bg_color"])
                     _insert_replacement(page, e, udm, base_dir)
-            _apply_image_swaps(doc, image_swaps)
-            doc.save(str(output_path), garbage=4, deflate=True, clean=True)
+            _apply_image_swaps(work, image_swaps)
+            work.save(str(output_path), garbage=4, deflate=True, clean=True)
             return True
 
-        edits_by_page, fully_patchable = _diff_runs(udm, doc)
-        if not fully_patchable:
+        edits_by_page, fully_patchable = _diff_runs(udm, work)
+        # When page ops happened we always have a result to write (the
+        # rebuilt doc); content edits we can't cleanly diff are simply
+        # skipped rather than discarding the page reordering.
+        if not fully_patchable and not page_ops:
             return False
-        if not edits_by_page and not image_swaps:
+        if not edits_by_page and not image_swaps and not page_ops:
             # No edits to apply but fingerprint differs (otherwise passthrough
             # would have fired). Treat as fall-through to render.
             return False
@@ -108,19 +122,63 @@ def try_patch_export(
         # Apply: queue all redacts on a page, apply them once, then insert
         # all new text. Doing inserts after apply_redactions avoids the
         # new text getting erased.
-        for page_idx, page_edits in edits_by_page.items():
-            page = doc[page_idx]
-            for e in page_edits:
-                page.add_redact_annot(e["rect"], fill=None)
-            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
-            for e in page_edits:
-                _insert_replacement(page, e, udm, base_dir)
+        if fully_patchable:
+            for page_idx, page_edits in edits_by_page.items():
+                page = work[page_idx]
+                for e in page_edits:
+                    page.add_redact_annot(e["rect"], fill=None)
+                page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+                for e in page_edits:
+                    _insert_replacement(page, e, udm, base_dir)
 
-        _apply_image_swaps(doc, image_swaps)
-        doc.save(str(output_path), garbage=4, deflate=True, clean=True)
+        _apply_image_swaps(work, image_swaps)
+        work.save(str(output_path), garbage=4, deflate=True, clean=True)
         return True
     finally:
         doc.close()
+        if rebuilt is not None:
+            rebuilt.close()
+
+
+def _page_ops_needed(udm: dict[str, Any], source_doc: pymupdf.Document) -> bool:
+    """True if the UDM's page set differs structurally from the source —
+    pages reordered, deleted, inserted, or rotated."""
+    pages = (udm.get("content") or {}).get("pages") or []
+    if len(pages) != len(source_doc):
+        return True
+    for i, page in enumerate(pages):
+        sp = (page.get("_meta") or {}).get("source_page")
+        if sp != i:  # reordered, or inserted (sp is None)
+            return True
+        rot = int(page.get("rotation") or 0)
+        src_rot = int(source_doc[i].rotation or 0) if i < len(source_doc) else 0
+        if rot != src_rot:
+            return True
+    return False
+
+
+def _rebuild_pages(source_doc: pymupdf.Document, udm: dict[str, Any]) -> pymupdf.Document:
+    """Build a fresh document from the UDM page list. Each page is either
+    copied verbatim from the source (insert_pdf preserves all content) or
+    created blank (an inserted page). Per-page rotation is applied.
+
+    Output page i corresponds to UDM page i, so the content-patch logic
+    can run against the rebuilt doc unchanged.
+    """
+    out = pymupdf.open()
+    pages = (udm.get("content") or {}).get("pages") or []
+    for page in pages:
+        sp = (page.get("_meta") or {}).get("source_page")
+        if sp is not None and 0 <= sp < len(source_doc):
+            out.insert_pdf(source_doc, from_page=sp, to_page=sp)
+        else:
+            width = float((page.get("width") or {}).get("value", 612))
+            height = float((page.get("height") or {}).get("value", 792))
+            out.new_page(width=width, height=height)
+        rot = int(page.get("rotation") or 0)
+        if rot:
+            out[-1].set_rotation(rot)
+    return out
 
 
 def _udm_has_ocr_runs(udm: dict[str, Any]) -> bool:

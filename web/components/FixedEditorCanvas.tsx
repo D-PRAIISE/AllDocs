@@ -364,6 +364,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         placeMode={placeMode}
         onTogglePlaceMode={() => setPlaceMode((p) => !p)}
       />
+      <PageOpsPanel doc={doc} onChange={onChange} />
       <div className="space-y-6 flex flex-col items-center">
         {fixed.pages.map((page, pageIdx) => (
           <div key={page.number}>
@@ -399,6 +400,107 @@ interface EditingState {
   layerIdx: number;
   runIdx: number;
   initialText: string;
+}
+
+/** Page operations strip — reorder / rotate / delete / insert blank.
+ * Mutates doc.content.pages; the exporter's page-ops path rebuilds the
+ * PDF from the source pages in this order. */
+function PageOpsPanel({ doc, onChange }: { doc: Document; onChange: (d: Document) => void }) {
+  const pages = (doc.content as FixedContent).pages;
+
+  const apply = (mutate: (pages: Page[]) => Page[]) => {
+    const next = structuredClone(doc) as Document;
+    const content = next.content as FixedContent;
+    content.pages = mutate(content.pages);
+    content.pages.forEach((p, i) => {
+      p.number = i + 1;
+    });
+    onChange(next);
+  };
+
+  const move = (i: number, dir: -1 | 1) =>
+    apply((ps) => {
+      const j = i + dir;
+      if (j < 0 || j >= ps.length) return ps;
+      const copy = [...ps];
+      [copy[i], copy[j]] = [copy[j]!, copy[i]!];
+      return copy;
+    });
+
+  const rotate = (i: number) =>
+    apply((ps) => {
+      const copy = [...ps];
+      copy[i] = { ...copy[i]!, rotation: (((copy[i]!.rotation ?? 0) + 90) % 360) };
+      return copy;
+    });
+
+  const remove = (i: number) => apply((ps) => ps.filter((_, idx) => idx !== i));
+
+  const insertBlank = (afterIdx: number) =>
+    apply((ps) => {
+      const ref = ps[0]!;
+      const blank: Page = {
+        number: 0,
+        width: structuredClone(ref.width),
+        height: structuredClone(ref.height),
+        layers: [],
+        rotation: 0,
+        _meta: {},
+      };
+      const copy = [...ps];
+      copy.splice(afterIdx + 1, 0, blank);
+      return copy;
+    });
+
+  const btn = "font-mono text-xs w-6 h-6 flex items-center justify-center text-muted hover:text-fg hover:bg-bg disabled:opacity-25 disabled:hover:text-muted";
+
+  return (
+    <div className="border border-border bg-surface px-3 py-2">
+      <div className="label mb-1.5">pages — reorder · rotate · delete · insert</div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {pages.map((p, i) => {
+          const inserted = (p._meta?.source_page ?? null) === null;
+          return (
+            <div key={i} className="flex items-center border border-border bg-bg">
+              <button className={btn} disabled={i === 0} onClick={() => move(i, -1)} title="move left">
+                ◀
+              </button>
+              <span
+                className="font-mono text-[0.65rem] px-1.5 text-fg whitespace-nowrap"
+                title={inserted ? "inserted blank page" : `source page ${(p._meta!.source_page as number) + 1}`}
+              >
+                {i + 1}
+                {inserted ? "*" : ""}
+                {p.rotation ? ` ${p.rotation}°` : ""}
+              </span>
+              <button className={btn} onClick={() => rotate(i)} title="rotate 90°">
+                ⟳
+              </button>
+              <button
+                className={btn}
+                disabled={pages.length <= 1}
+                onClick={() => remove(i)}
+                title="delete page"
+              >
+                ✕
+              </button>
+              <button className={btn} onClick={() => insertBlank(i)} title="insert blank after">
+                ＋
+              </button>
+              <button
+                className={btn}
+                disabled={i === pages.length - 1}
+                onClick={() => move(i, 1)}
+                title="move right"
+              >
+                ▶
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 // Image layers smaller than this (PDF points, either dimension) don't get a
@@ -438,8 +540,28 @@ function FixedPageEditor({
   const pageWPt = page.width.unit === "pt" ? page.width.value : lengthToPx(page.width) / (96 / 72);
   const pageHPt = page.height.unit === "pt" ? page.height.value : lengthToPx(page.height) / (96 / 72);
 
+  // Page rotation: the inner W×H surface is rotated about its centre and
+  // re-centred inside an outer box whose dimensions account for the
+  // rotated footprint (swapped for 90° / 270°).
+  const rot = (((page.rotation ?? 0) % 360) + 360) % 360;
+  const rotated = rot === 90 || rot === 270;
+  const outerW = rotated ? h : w;
+  const outerH = rotated ? w : h;
+
   return (
-    <div className="relative bg-white border border-border" style={{ width: w, height: h }}>
+    <div style={{ width: outerW, height: outerH, position: "relative" }}>
+      <div
+        className="relative bg-white border border-border"
+        style={{
+          width: w,
+          height: h,
+          position: "absolute",
+          left: (outerW - w) / 2,
+          top: (outerH - h) / 2,
+          transform: rot ? `rotate(${rot}deg)` : undefined,
+          transformOrigin: "center center",
+        }}
+      >
       <Stage width={w} height={h}>
         <Layer listening>
           {page.layers
@@ -490,6 +612,7 @@ function FixedPageEditor({
       ) : (
         <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
       )}
+      </div>
     </div>
   );
 }

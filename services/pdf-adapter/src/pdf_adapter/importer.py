@@ -342,6 +342,11 @@ def _page_to_udm(
         "width": _length(page.rect.width, "pt"),
         "height": _length(page.rect.height, "pt"),
         "layers": layers,
+        "rotation": int(page.rotation or 0),
+        # source_page (0-based) lets the page-ops exporter rebuild a
+        # reordered / deleted / rotated page set by copying the right
+        # source page. Inserted blank pages have no source_page.
+        "_meta": {"source_page": number - 1},
     }
 
 
