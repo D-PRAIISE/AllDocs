@@ -89,13 +89,17 @@ def try_patch_export(
         # Image swaps are orthogonal to text edits — a UDM image resource
         # whose data_ref became a data: URL means the user replaced it.
         image_swaps = _diff_image_resources(udm)
+        # Net-new content the user added in the editor.
+        added_runs = _diff_added_runs(udm)
+        added_images = _diff_added_images(udm)
+        has_additions = bool(added_runs or added_images)
 
         # OCR docs (scanned / rasterized — text sits over an image) take a
         # separate path: there are no source text spans to redact, so we
         # cover the old pixels and draw the new text on top.
         if _udm_has_ocr_runs(udm):
             ocr_edits = _diff_ocr_runs(udm)
-            if not ocr_edits and not image_swaps and not page_ops:
+            if not ocr_edits and not image_swaps and not page_ops and not has_additions:
                 return False
             for page_idx, page_edits in ocr_edits.items():
                 if page_idx >= len(work):
@@ -104,6 +108,7 @@ def try_patch_export(
                 for e in page_edits:
                     page.draw_rect(e["cover_rect"], color=None, fill=e["bg_color"])
                     _insert_replacement(page, e, udm, base_dir)
+            _apply_added_content(work, udm, added_runs, added_images, base_dir)
             _apply_image_swaps(work, image_swaps)
             work.save(str(output_path), garbage=4, deflate=True, clean=True)
             return True
@@ -125,6 +130,7 @@ def try_patch_export(
             and not image_swaps
             and not page_ops
             and not shape_edits
+            and not has_additions
         ):
             # No edits to apply but fingerprint differs (otherwise passthrough
             # would have fired). Treat as fall-through to render.
@@ -143,6 +149,7 @@ def try_patch_export(
                     _insert_replacement(page, e, udm, base_dir)
 
         _apply_shape_recolors(work, udm, shape_edits, base_dir)
+        _apply_added_content(work, udm, added_runs, added_images, base_dir)
         _apply_image_swaps(work, image_swaps)
         work.save(str(output_path), garbage=4, deflate=True, clean=True)
         return True
@@ -548,6 +555,10 @@ def _diff_runs(
             if layer.get("type") != "text":
                 continue
             for run in layer.get("runs", []):
+                # Added runs are net-new content with no source span —
+                # _diff_added_runs handles them; skip here.
+                if (run.get("_meta") or {}).get("added"):
+                    continue
                 udm_text = run.get("text", "")
                 udm_x = float(run["x"]["value"])
                 udm_y = float(run["y"]["value"])
@@ -582,6 +593,103 @@ def _diff_runs(
             return {}, False
 
     return dict(edits_by_page), True
+
+
+def _diff_added_runs(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    """Collect text runs the user added in the editor (marked
+    ``_meta.added``). These are net-new — inserted, never redacted."""
+    from collections import defaultdict
+
+    out: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    pages = (udm.get("content") or {}).get("pages") or []
+    for i, page in enumerate(pages):
+        for layer in page.get("layers", []):
+            if layer.get("type") != "text":
+                continue
+            for run in layer.get("runs", []):
+                if not (run.get("_meta") or {}).get("added"):
+                    continue
+                if not run.get("text"):
+                    continue
+                try:
+                    size = float(run["font_size"]["value"])
+                    x = float(run["x"]["value"])
+                    y = float(run["y"]["value"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                out[i].append(
+                    {
+                        "added": True,
+                        "baseline": (x, y - size * 0.2),
+                        "new_text": run.get("text", ""),
+                        "font_id": run.get("font_id"),
+                        "font_size": size,
+                        "color": run.get("color") or {},
+                    }
+                )
+    return dict(out)
+
+
+def _diff_added_images(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    """Collect image layers the user added — their resource has a
+    data: URL and no ``_meta.xref`` (a brand-new image, not a
+    replacement of an existing one). Returns per-page (rect, bytes)."""
+    import base64
+    from collections import defaultdict
+
+    resources = {
+        r.get("id"): r for r in (udm.get("resources") or {}).get("images", []) or []
+    }
+    out: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    pages = (udm.get("content") or {}).get("pages") or []
+    for i, page in enumerate(pages):
+        for layer in page.get("layers", []):
+            if layer.get("type") != "image":
+                continue
+            res = resources.get(layer.get("image_id"))
+            if not res:
+                continue
+            data_ref = str(res.get("data_ref") or "")
+            if not data_ref.startswith("data:"):
+                continue
+            if (res.get("_meta") or {}).get("xref"):
+                continue  # a replacement, handled by _diff_image_resources
+            rect = _image_layer_rect(layer)
+            if rect is None:
+                continue
+            comma = data_ref.find(",")
+            if comma < 0:
+                continue
+            try:
+                raw = base64.b64decode(data_ref[comma + 1 :])
+            except Exception:
+                continue
+            if raw:
+                out[i].append({"rect": rect, "bytes": raw})
+    return dict(out)
+
+
+def _apply_added_content(
+    work: pymupdf.Document,
+    udm: dict[str, Any],
+    added_runs: dict[int, list[dict[str, Any]]],
+    added_images: dict[int, list[dict[str, Any]]],
+    base_dir: Path,
+) -> None:
+    """Insert net-new text runs and images onto their pages."""
+    for page_idx, imgs in added_images.items():
+        if page_idx >= len(work):
+            continue
+        for img in imgs:
+            try:
+                work[page_idx].insert_image(img["rect"], stream=img["bytes"])
+            except Exception:
+                continue
+    for page_idx, runs in added_runs.items():
+        if page_idx >= len(work):
+            continue
+        for edit in runs:
+            _insert_replacement(work[page_idx], edit, udm, base_dir)
 
 
 def _collect_spans(page: pymupdf.Page) -> list[dict[str, Any]]:

@@ -23,6 +23,9 @@ import {
 
 type FamilyClass = "sans" | "serif" | "mono";
 
+/** The one active editor tool. "none" = plain click-to-edit text. */
+type EditorMode = "none" | "region-image" | "recolor" | "add-text" | "add-image";
+
 /** What a text edit commits: the new string plus its formatting. */
 interface EditCommit {
   text: string;
@@ -302,9 +305,82 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [doc, onChange]
   );
 
-  const [placeMode, setPlaceMode] = useState(false);
-  const [recolorMode, setRecolorMode] = useState(false);
+  // One exclusive editor tool at a time.
+  const [mode, setMode] = useState<EditorMode>("none");
+  const placeMode = mode === "region-image";
+  const recolorMode = mode === "recolor";
+  const addTextMode = mode === "add-text";
+  const addImageMode = mode === "add-image";
+  const toggleMode = (m: EditorMode) => setMode((cur) => (cur === m ? "none" : m));
   const [layout, setLayout] = useState<"list" | "grid">("list");
+
+  // Place a net-new text run where the user clicked and open the editor.
+  const addTextRun = useCallback(
+    (pageIdx: number, cx: number, cy: number) => {
+      const next = structuredClone(doc) as Document;
+      const fontId = ensureFont(next, "sans", 400);
+      const content = next.content as FixedContent;
+      const page = content.pages[pageIdx];
+      if (!page) return;
+      const xPt = (cx / scale) * (72 / 96);
+      const yPt = (cy / scale) * (72 / 96);
+      const layerIdx = page.layers.length;
+      page.layers.push({
+        type: "text",
+        runs: [
+          {
+            text: "New text",
+            font_id: fontId,
+            font_size: { value: 14, unit: "pt" },
+            color: { literal: { kind: "rgb", r: 0, g: 0, b: 0 } },
+            x: { value: xPt, unit: "pt" },
+            // run.y is the baseline-ish bottom; the click marks the top.
+            y: { value: yPt + 14, unit: "pt" },
+            _meta: { added: true },
+          },
+        ],
+      });
+      onChange(next);
+      setMode("none");
+      setEditing({ pageIdx, layerIdx, runIdx: 0, initialText: "New text" });
+    },
+    [doc, onChange, scale]
+  );
+
+  // Place a net-new image where the user clicked.
+  const addImage = useCallback(
+    async (pageIdx: number, cx: number, cy: number) => {
+      const picked = await pickImageFile();
+      setMode("none");
+      if (!picked) return;
+      const next = structuredClone(doc) as Document;
+      const content = next.content as FixedContent;
+      const page = content.pages[pageIdx];
+      if (!page) return;
+      const xPt = (cx / scale) * (72 / 96);
+      const yPt = (cy / scale) * (72 / 96);
+      const dispW = 160;
+      const dispH = picked.width > 0 ? (dispW * picked.height) / picked.width : dispW;
+      const imgId = `img_added_${next.resources.images.length}`;
+      next.resources.images.push({
+        id: imgId,
+        format: picked.format as "png" | "jpeg" | "webp",
+        width: picked.width,
+        height: picked.height,
+        data_ref: picked.dataUrl,
+      });
+      page.layers.push({
+        type: "image",
+        image_id: imgId,
+        x: { value: xPt, unit: "pt" },
+        y: { value: yPt, unit: "pt" },
+        width: { value: dispW, unit: "pt" },
+        height: { value: dispH, unit: "pt" },
+      });
+      onChange(next);
+    },
+    [doc, onChange, scale]
+  );
 
   const recolorShape = useCallback(
     async (pageIdx: number, layerIdx: number) => {
@@ -352,19 +428,19 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         }
       }
       if (!base) {
-        setPlaceMode(false);
+        setMode("none");
         return;
       }
 
       const resource = doc.resources.images.find((i) => i.id === base!.image_id);
       if (!resource || !resource.data_ref || resource.data_ref.startsWith("xref:")) {
-        setPlaceMode(false);
+        setMode("none");
         return;
       }
 
       const picked = await pickImageFile();
       if (!picked) {
-        setPlaceMode(false);
+        setMode("none");
         return;
       }
 
@@ -398,7 +474,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       } catch {
         // Compositing failed (e.g. image load) — leave the doc untouched.
       } finally {
-        setPlaceMode(false);
+        setMode("none");
       }
     },
     [doc, onChange, scale]
@@ -409,16 +485,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       <EditorHeader
         scale={scale}
         onScaleChange={setScale}
-        placeMode={placeMode}
-        onTogglePlaceMode={() => {
-          setPlaceMode((p) => !p);
-          setRecolorMode(false);
-        }}
-        recolorMode={recolorMode}
-        onToggleRecolorMode={() => {
-          setRecolorMode((r) => !r);
-          setPlaceMode(false);
-        }}
+        mode={mode}
+        onToggleMode={toggleMode}
         layout={layout}
         onLayoutChange={(l) => {
           setLayout(l);
@@ -449,6 +517,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               editedKeys={editedKeys}
               placeMode={placeMode}
               recolorMode={recolorMode}
+              addTextMode={addTextMode}
+              addImageMode={addImageMode}
               onStartEdit={setEditing}
               onCancelEdit={() => setEditing(null)}
               onCommitEdit={(state, commit) => {
@@ -458,6 +528,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               onReplaceImage={replaceImage}
               onPlaceRegion={(rect) => placeImageInRegion(pageIdx, rect)}
               onRecolorShape={(layerIdx) => recolorShape(pageIdx, layerIdx)}
+              onAddText={(cx, cy) => addTextRun(pageIdx, cx, cy)}
+              onAddImage={(cx, cy) => addImage(pageIdx, cx, cy)}
             />
           </div>
         ))}
@@ -593,6 +665,10 @@ function FixedPageEditor({
   onPlaceRegion,
   recolorMode,
   onRecolorShape,
+  addTextMode,
+  addImageMode,
+  onAddText,
+  onAddImage,
 }: {
   page: Page;
   pageIdx: number;
@@ -608,6 +684,10 @@ function FixedPageEditor({
   onPlaceRegion: (rect: { x: number; y: number; w: number; h: number }) => void;
   recolorMode: boolean;
   onRecolorShape: (layerIdx: number) => void;
+  addTextMode: boolean;
+  addImageMode: boolean;
+  onAddText: (cx: number, cy: number) => void;
+  onAddImage: (cx: number, cy: number) => void;
 }) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
@@ -690,13 +770,29 @@ function FixedPageEditor({
           onCancel={onCancelEdit}
         />
       ) : null}
-      {placeMode ? (
-        <RegionSelectOverlay onComplete={onPlaceRegion} />
-      ) : (
+      {placeMode ? <RegionSelectOverlay onComplete={onPlaceRegion} /> : null}
+      {addTextMode ? <ClickPlaceOverlay onPlace={onAddText} /> : null}
+      {addImageMode ? <ClickPlaceOverlay onPlace={onAddImage} /> : null}
+      {!placeMode && !addTextMode && !addImageMode ? (
         <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
-      )}
+      ) : null}
       </div>
     </div>
+  );
+}
+
+/** Transparent overlay that reports a single click position (canvas px).
+ * Used by add-text and add-image modes to place new content. */
+function ClickPlaceOverlay({ onPlace }: { onPlace: (cx: number, cy: number) => void }) {
+  return (
+    <div
+      className="absolute inset-0 z-30"
+      style={{ cursor: "crosshair" }}
+      onMouseDown={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        onPlace(e.clientX - r.left, e.clientY - r.top);
+      }}
+    />
   );
 }
 
@@ -1247,22 +1343,26 @@ function TextEditOverlay({
   );
 }
 
+const MODE_HINT: Record<EditorMode, string> = {
+  none: "click any text to edit · enter to commit · esc to cancel",
+  "region-image": "drag a box over the area to replace, then pick an image",
+  recolor: "click any shape to recolor it",
+  "add-text": "click where you want the new text",
+  "add-image": "click where you want the new image, then pick a file",
+};
+
 function EditorHeader({
   scale,
   onScaleChange,
-  placeMode,
-  onTogglePlaceMode,
-  recolorMode,
-  onToggleRecolorMode,
+  mode,
+  onToggleMode,
   layout,
   onLayoutChange,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
-  placeMode: boolean;
-  onTogglePlaceMode: () => void;
-  recolorMode: boolean;
-  onToggleRecolorMode: () => void;
+  mode: EditorMode;
+  onToggleMode: (m: EditorMode) => void;
   layout: "list" | "grid";
   onLayoutChange: (l: "list" | "grid") => void;
 }) {
@@ -1272,11 +1372,12 @@ function EditorHeader({
         ? "bg-accent text-accent-fg border-accent"
         : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
     }`;
-  const hint = placeMode
-    ? "drag a box over the area to replace, then pick an image"
-    : recolorMode
-      ? "click any shape to recolor it"
-      : "click any text to edit · enter to commit · esc to cancel";
+  const tools: { m: EditorMode; label: string }[] = [
+    { m: "add-text", label: "✎ add text" },
+    { m: "add-image", label: "🖼 add image" },
+    { m: "recolor", label: "◐ recolor shape" },
+    { m: "region-image", label: "⊕ replace region" },
+  ];
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">
       <div className="flex items-center gap-1 flex-wrap">
@@ -1288,14 +1389,14 @@ function EditorHeader({
         <button onClick={() => onLayoutChange("grid")} className={modeBtn(layout === "grid")}>
           ▦ grid
         </button>
-        <button onClick={onTogglePlaceMode} className={`${modeBtn(placeMode)} ml-3`}>
-          ⊕ place image
-        </button>
-        <button onClick={onToggleRecolorMode} className={modeBtn(recolorMode)}>
-          ◐ recolor shape
-        </button>
+        <span className="label mx-2">tools</span>
+        {tools.map((t) => (
+          <button key={t.m} onClick={() => onToggleMode(t.m)} className={modeBtn(mode === t.m)}>
+            {t.label}
+          </button>
+        ))}
       </div>
-      <div className="label text-muted">{hint}</div>
+      <div className="label text-muted">{MODE_HINT[mode]}</div>
     </div>
   );
 }
