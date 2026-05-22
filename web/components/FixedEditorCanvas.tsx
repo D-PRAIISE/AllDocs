@@ -480,6 +480,33 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [doc, onChange, scale]
   );
 
+  // Reposition a dragged text run / image layer (added content only).
+  const moveRun = useCallback(
+    (pageIdx: number, layerIdx: number, runIdx: number, xPt: number, yPt: number) => {
+      const next = structuredClone(doc) as Document;
+      const layer = (next.content as FixedContent).pages[pageIdx]?.layers[layerIdx];
+      if (!layer || layer.type !== "text") return;
+      const run = layer.runs[runIdx];
+      if (!run) return;
+      run.x = { value: xPt, unit: "pt" };
+      run.y = { value: yPt, unit: "pt" };
+      onChange(next);
+    },
+    [doc, onChange]
+  );
+
+  const moveImageLayer = useCallback(
+    (pageIdx: number, layerIdx: number, xPt: number, yPt: number) => {
+      const next = structuredClone(doc) as Document;
+      const layer = (next.content as FixedContent).pages[pageIdx]?.layers[layerIdx];
+      if (!layer || layer.type !== "image") return;
+      layer.x = { value: xPt, unit: "pt" };
+      layer.y = { value: yPt, unit: "pt" };
+      onChange(next);
+    },
+    [doc, onChange]
+  );
+
   return (
     <div className="space-y-4">
       <EditorHeader
@@ -530,6 +557,10 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               onRecolorShape={(layerIdx) => recolorShape(pageIdx, layerIdx)}
               onAddText={(cx, cy) => addTextRun(pageIdx, cx, cy)}
               onAddImage={(cx, cy) => addImage(pageIdx, cx, cy)}
+              onMoveRun={(layerIdx, runIdx, xPt, yPt) =>
+                moveRun(pageIdx, layerIdx, runIdx, xPt, yPt)
+              }
+              onMoveImage={(layerIdx, xPt, yPt) => moveImageLayer(pageIdx, layerIdx, xPt, yPt)}
             />
           </div>
         ))}
@@ -595,53 +626,54 @@ function PageOpsPanel({ doc, onChange }: { doc: Document; onChange: (d: Document
       return copy;
     });
 
-  const btn = "font-mono text-xs w-6 h-6 flex items-center justify-center text-muted hover:text-fg hover:bg-bg disabled:opacity-25 disabled:hover:text-muted";
+  // Selected page index, clamped if pages were removed.
+  const [selRaw, setSel] = useState(0);
+  const sel = Math.min(selRaw, pages.length - 1);
+  const selPage = pages[sel]!;
+  const inserted = (selPage._meta?.source_page ?? null) === null;
+
+  const act =
+    "font-mono text-xs px-2 py-1 border border-border text-muted hover:text-fg hover:border-fg disabled:opacity-25 disabled:hover:text-muted disabled:hover:border-border";
 
   return (
-    <div className="border border-border bg-surface px-3 py-2">
-      <div className="label mb-1.5">pages — reorder · rotate · delete · insert</div>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {pages.map((p, i) => {
-          const inserted = (p._meta?.source_page ?? null) === null;
-          return (
-            <div key={i} className="flex items-center border border-border bg-bg">
-              <button className={btn} disabled={i === 0} onClick={() => move(i, -1)} title="move left">
-                ◀
-              </button>
-              <span
-                className="font-mono text-[0.65rem] px-1.5 text-fg whitespace-nowrap"
-                title={inserted ? "inserted blank page" : `source page ${(p._meta!.source_page as number) + 1}`}
-              >
-                {i + 1}
-                {inserted ? "*" : ""}
-                {p.rotation ? ` ${p.rotation}°` : ""}
-              </span>
-              <button className={btn} onClick={() => rotate(i)} title="rotate 90°">
-                ⟳
-              </button>
-              <button
-                className={btn}
-                disabled={pages.length <= 1}
-                onClick={() => remove(i)}
-                title="delete page"
-              >
-                ✕
-              </button>
-              <button className={btn} onClick={() => insertBlank(i)} title="insert blank after">
-                ＋
-              </button>
-              <button
-                className={btn}
-                disabled={i === pages.length - 1}
-                onClick={() => move(i, 1)}
-                title="move right"
-              >
-                ▶
-              </button>
-            </div>
-          );
-        })}
-      </div>
+    <div className="border border-border bg-surface px-3 py-2 flex items-center gap-2 flex-wrap">
+      <span className="label">page</span>
+      <select
+        value={sel}
+        onChange={(e) => setSel(Number(e.target.value))}
+        className="font-mono text-xs px-1.5 py-1 bg-bg border border-border text-fg"
+      >
+        {pages.map((p, i) => (
+          <option key={i} value={i}>
+            {i + 1}
+            {(p._meta?.source_page ?? null) === null ? " (blank)" : ""}
+            {p.rotation ? ` · ${p.rotation}°` : ""}
+          </option>
+        ))}
+      </select>
+      <span className="label text-subtle">of {pages.length}</span>
+
+      <span className="w-px h-5 bg-border mx-1" />
+      <button className={act} disabled={sel === 0} onClick={() => { move(sel, -1); setSel(sel - 1); }}>
+        ◀ move left
+      </button>
+      <button
+        className={act}
+        disabled={sel === pages.length - 1}
+        onClick={() => { move(sel, 1); setSel(sel + 1); }}
+      >
+        move right ▶
+      </button>
+      <button className={act} onClick={() => rotate(sel)}>
+        ⟳ rotate{selPage.rotation ? ` (${selPage.rotation}°)` : ""}
+      </button>
+      <button className={act} disabled={pages.length <= 1} onClick={() => remove(sel)}>
+        ✕ delete
+      </button>
+      <button className={act} onClick={() => { insertBlank(sel); setSel(sel + 1); }}>
+        ＋ insert blank after
+      </button>
+      {inserted ? <span className="label text-subtle">inserted blank page</span> : null}
     </div>
   );
 }
@@ -669,6 +701,8 @@ function FixedPageEditor({
   addImageMode,
   onAddText,
   onAddImage,
+  onMoveRun,
+  onMoveImage,
 }: {
   page: Page;
   pageIdx: number;
@@ -688,6 +722,8 @@ function FixedPageEditor({
   addImageMode: boolean;
   onAddText: (cx: number, cy: number) => void;
   onAddImage: (cx: number, cy: number) => void;
+  onMoveRun: (layerIdx: number, runIdx: number, xPt: number, yPt: number) => void;
+  onMoveImage: (layerIdx: number, xPt: number, yPt: number) => void;
 }) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
@@ -739,7 +775,15 @@ function FixedPageEditor({
                 );
               }
               if (layer.type === "image") {
-                return <ImageNode key={layerIdx} layer={layer} resources={doc.resources} scale={scale} />;
+                return (
+                  <ImageNode
+                    key={layerIdx}
+                    layer={layer}
+                    resources={doc.resources}
+                    scale={scale}
+                    onMove={(xPt, yPt) => onMoveImage(layerIdx, xPt, yPt)}
+                  />
+                );
               }
               if (layer.type === "text") {
                 return (
@@ -753,6 +797,7 @@ function FixedPageEditor({
                     editing={editing}
                     editedKeys={editedKeys}
                     onStartEdit={onStartEdit}
+                    onMoveRun={onMoveRun}
                   />
                 );
               }
@@ -905,6 +950,7 @@ function TextNodes({
   editing,
   editedKeys,
   onStartEdit,
+  onMoveRun,
 }: {
   layer: UdmTextLayer;
   layerIdx: number;
@@ -914,6 +960,7 @@ function TextNodes({
   editing: EditingState | null;
   editedKeys: ReadonlySet<string>;
   onStartEdit: (s: EditingState) => void;
+  onMoveRun: (layerIdx: number, runIdx: number, xPt: number, yPt: number) => void;
 }) {
   return (
     <>
@@ -929,6 +976,7 @@ function TextNodes({
             scale={scale}
             isEdited={editedKeys.has(runKey(pageIdx, layerIdx, runIdx))}
             onClick={() => onStartEdit({ pageIdx, layerIdx, runIdx, initialText: run.text })}
+            onMove={(xPt, yPt) => onMoveRun(layerIdx, runIdx, xPt, yPt)}
           />
         );
       })}
@@ -947,18 +995,28 @@ function TextRunNode({
   scale,
   isEdited,
   onClick,
+  onMove,
 }: {
   run: PositionedTextRun;
   resources: Document["resources"];
   scale: number;
   isEdited: boolean;
   onClick: () => void;
+  onMove: (xPt: number, yPt: number) => void;
 }) {
   const font = resources.fonts.find((f) => f.id === run.font_id);
   const x = lengthToPx(run.x) * scale;
   const y = lengthToPx(run.y) * scale;
   const fontSize = lengthToPx(run.font_size) * scale;
   const top = y - fontSize * BASELINE_TO_TOP;
+  // Added runs are draggable — drag to reposition; click still edits.
+  const draggable = !!run._meta?.added;
+  const onDragEnd = (e: KonvaEventObject<DragEvent>) => {
+    const nx = e.target.x();
+    const ny = e.target.y();
+    const pxToPt = (px: number) => (px / scale) * (72 / 96);
+    onMove(pxToPt(nx), pxToPt(ny + fontSize * BASELINE_TO_TOP));
+  };
 
   // OCR runs sit on top of a scanned image that already shows the text.
   // Unedited: render an invisible-but-clickable hit rect (with a faint
@@ -1029,9 +1087,11 @@ function TextRunNode({
       fontStyle={konvaFontStyle(font)}
       fill={colorRefToCss(run.color, resources)}
       rotation={run.rotation ?? 0}
+      draggable={draggable}
+      onDragEnd={onDragEnd}
       onClick={onClick}
       onTap={onClick}
-      onMouseEnter={(e: KonvaEventObject<MouseEvent>) => setCursor(e, "text")}
+      onMouseEnter={(e: KonvaEventObject<MouseEvent>) => setCursor(e, draggable ? "move" : "text")}
       onMouseLeave={(e: KonvaEventObject<MouseEvent>) => setCursor(e, "default")}
     />
   );
@@ -1041,10 +1101,12 @@ function ImageNode({
   layer,
   resources,
   scale,
+  onMove,
 }: {
   layer: UdmImageLayer;
   resources: Document["resources"];
   scale: number;
+  onMove: (xPt: number, yPt: number) => void;
 }) {
   const img = resources.images.find((i) => i.id === layer.image_id);
   const ref = img?.data_ref ?? "";
@@ -1058,6 +1120,13 @@ function ImageNode({
   const y = lengthToPx(layer.y) * scale;
   const w = lengthToPx(layer.width) * scale;
   const h = lengthToPx(layer.height) * scale;
+
+  // An "added" image (data: URL, no source xref) is draggable.
+  const added = ref.startsWith("data:") && !(img?._meta as { xref?: number } | undefined)?.xref;
+  const onDragEnd = (e: KonvaEventObject<DragEvent>) => {
+    const pxToPt = (px: number) => (px / scale) * (72 / 96);
+    onMove(pxToPt(e.target.x()), pxToPt(e.target.y()));
+  };
 
   if (!image) {
     // Distinct placeholders for loading vs failed so we can debug from the
@@ -1086,12 +1155,18 @@ function ImageNode({
       height={h}
       rotation={layer.rotation ?? 0}
       opacity={layer.opacity ?? 1}
-      // Images must not intercept clicks in v1 — only text is interactive.
-      // Without this, off-page or oversized images (lesson #3) block clicks
-      // on text runs that visually sit on top of them. Konva hit-tests
-      // top-down; a tight text bbox can let clicks fall through into the
-      // image's much larger hit area.
-      listening={false}
+      // Only added images are interactive (draggable). Existing images
+      // stay non-listening so clicks fall through to text on top of them
+      // (off-page / oversized images otherwise swallow those clicks).
+      listening={added}
+      draggable={added}
+      onDragEnd={added ? onDragEnd : undefined}
+      onMouseEnter={
+        added ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "move") : undefined
+      }
+      onMouseLeave={
+        added ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "default") : undefined
+      }
     />
   );
 }

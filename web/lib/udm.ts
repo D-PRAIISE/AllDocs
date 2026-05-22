@@ -75,6 +75,7 @@ export interface ImageResource {
   data_ref: string;
   alt_text?: string;
   color_profile?: string;
+  _meta?: { xref?: number; [k: string]: unknown };
 }
 
 export interface StyleResource {
