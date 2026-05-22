@@ -11,6 +11,7 @@ import {
 } from "@/lib/udm";
 import { FixedPageView } from "./FixedPageView";
 import { FlowContentView } from "./FlowContentView";
+import { ZoomControl } from "./ZoomControl";
 
 interface UdmViewerProps {
   doc: Document;
@@ -28,7 +29,10 @@ export function UdmViewer({ doc }: UdmViewerProps) {
         scale={scale}
         onScaleChange={setScale}
         layout={layout}
-        onLayoutChange={setLayout}
+        onLayoutChange={(l) => {
+          setLayout(l);
+          setScale((s) => (l === "grid" && s > 0.5 ? 0.4 : l === "list" && s < 0.5 ? 1 : s));
+        }}
       />
     </div>
   );
@@ -159,7 +163,6 @@ function ScaleControl({
   layout: "list" | "grid";
   onLayoutChange: (l: "list" | "grid") => void;
 }) {
-  const presets = [0.5, 0.75, 1, 1.25, 1.5];
   const cls = (active: boolean) =>
     `font-mono text-xs px-2 py-1 border transition-colors ${
       active
@@ -168,12 +171,7 @@ function ScaleControl({
     }`;
   return (
     <div className="flex items-center gap-1 mb-3 flex-wrap">
-      <span className="label mr-2">scale</span>
-      {presets.map((p) => (
-        <button key={p} onClick={() => onScaleChange(p)} className={cls(scale === p)}>
-          {Math.round(p * 100)}%
-        </button>
-      ))}
+      <ZoomControl scale={scale} onScaleChange={onScaleChange} />
       <span className="label mx-2">view</span>
       <button onClick={() => onLayoutChange("list")} className={cls(layout === "list")}>
         ☰ list

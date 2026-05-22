@@ -5,6 +5,8 @@ import { Image as KonvaImage, Layer, Rect as KonvaRect, Stage, Text as KonvaText
 import type { KonvaEventObject } from "konva/lib/Node";
 import useImage from "use-image";
 
+import { ZoomControl } from "./ZoomControl";
+
 import {
   type Document,
   type FixedContent,
@@ -418,7 +420,12 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
           setPlaceMode(false);
         }}
         layout={layout}
-        onLayoutChange={setLayout}
+        onLayoutChange={(l) => {
+          setLayout(l);
+          // Give each mode a sensible default zoom so the switch is
+          // visible: grid drops to a thumbnail zoom, list returns to 100%.
+          setScale((s) => (l === "grid" && s > 0.5 ? 0.4 : l === "list" && s < 0.5 ? 1 : s));
+        }}
       />
       <PageOpsPanel doc={doc} onChange={onChange} />
       <div
@@ -1259,7 +1266,6 @@ function EditorHeader({
   layout: "list" | "grid";
   onLayoutChange: (l: "list" | "grid") => void;
 }) {
-  const presets = [0.5, 0.75, 1, 1.25, 1.5];
   const modeBtn = (active: boolean) =>
     `font-mono text-xs px-2 py-1 border transition-colors ${
       active
@@ -1274,12 +1280,7 @@ function EditorHeader({
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">
       <div className="flex items-center gap-1 flex-wrap">
-        <span className="label mr-2">scale</span>
-        {presets.map((p) => (
-          <button key={p} onClick={() => onScaleChange(p)} className={modeBtn(scale === p)}>
-            {Math.round(p * 100)}%
-          </button>
-        ))}
+        <ZoomControl scale={scale} onScaleChange={onScaleChange} />
         <span className="label mx-2">view</span>
         <button onClick={() => onLayoutChange("list")} className={modeBtn(layout === "list")}>
           ☰ list
