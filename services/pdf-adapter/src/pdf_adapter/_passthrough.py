@@ -73,7 +73,21 @@ def compute_fingerprint(udm: dict[str, Any]) -> str:
                 h.update(f"i:{layer.get('image_id', '')}\n".encode())
             elif t == "shape":
                 geom = layer.get("geometry") or {}
-                h.update(f"s:{geom.get('kind', '')}\n".encode())
+                # Include fill + stroke so a recolor invalidates passthrough.
+                fill = (layer.get("fill") or {}).get("color", {}).get("literal", {})
+                stroke = (
+                    ((layer.get("stroke") or {}).get("paint") or {})
+                    .get("color", {})
+                    .get("literal", {})
+                )
+                h.update(
+                    (
+                        f"s:{geom.get('kind', '')}"
+                        f"|f:{fill.get('r', '')},{fill.get('g', '')},{fill.get('b', '')},"
+                        f"{fill.get('hex', '')}"
+                        f"|k:{stroke.get('r', '')},{stroke.get('g', '')},{stroke.get('b', '')}\n"
+                    ).encode()
+                )
         for k in sorted(layer_counts):
             h.update(f"c:{k}={layer_counts[k]}\n".encode())
 

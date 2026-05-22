@@ -108,13 +108,24 @@ def try_patch_export(
             work.save(str(output_path), garbage=4, deflate=True, clean=True)
             return True
 
+        shape_edits, shape_blocked = _diff_shapes(udm, work)
+        if shape_blocked:
+            # A recolored shape overlaps an image — drawing the new fill
+            # over it would hide the image. Fall through to full render.
+            return False
+
         edits_by_page, fully_patchable = _diff_runs(udm, work)
         # When page ops happened we always have a result to write (the
         # rebuilt doc); content edits we can't cleanly diff are simply
         # skipped rather than discarding the page reordering.
         if not fully_patchable and not page_ops:
             return False
-        if not edits_by_page and not image_swaps and not page_ops:
+        if (
+            not edits_by_page
+            and not image_swaps
+            and not page_ops
+            and not shape_edits
+        ):
             # No edits to apply but fingerprint differs (otherwise passthrough
             # would have fired). Treat as fall-through to render.
             return False
@@ -131,6 +142,7 @@ def try_patch_export(
                 for e in page_edits:
                     _insert_replacement(page, e, udm, base_dir)
 
+        _apply_shape_recolors(work, udm, shape_edits, base_dir)
         _apply_image_swaps(work, image_swaps)
         work.save(str(output_path), garbage=4, deflate=True, clean=True)
         return True
@@ -243,6 +255,213 @@ def _page_using_xref(doc: pymupdf.Document, xref: int) -> pymupdf.Page:
             if img[0] == xref:
                 return page
     return doc[0]
+
+
+# ---- Shape recolor --------------------------------------------------------
+
+
+def _rects_close(a: pymupdf.Rect, b: pymupdf.Rect, tol: float = 1.5) -> bool:
+    return (
+        abs(a.x0 - b.x0) <= tol
+        and abs(a.y0 - b.y0) <= tol
+        and abs(a.x1 - b.x1) <= tol
+        and abs(a.y1 - b.y1) <= tol
+    )
+
+
+def _rects_intersect(a: pymupdf.Rect, b: pymupdf.Rect) -> bool:
+    return not (a.x1 <= b.x0 or b.x1 <= a.x0 or a.y1 <= b.y0 or b.y1 <= a.y0)
+
+
+def _rgb_close(
+    a: tuple[float, float, float], b: tuple[float, float, float], tol: float = 0.02
+) -> bool:
+    return all(abs(a[i] - b[i]) <= tol for i in range(3))
+
+
+def _geom_rect(geom: dict[str, Any]) -> pymupdf.Rect | None:
+    if geom.get("kind") != "rect":
+        return None
+    try:
+        x = float(geom["x"]["value"])
+        y = float(geom["y"]["value"])
+        w = float(geom["w"]["value"])
+        h = float(geom["h"]["value"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return pymupdf.Rect(x, y, x + w, y + h)
+
+
+def _image_layer_rect(layer: dict[str, Any]) -> pymupdf.Rect | None:
+    try:
+        x = float(layer["x"]["value"])
+        y = float(layer["y"]["value"])
+        w = float(layer["width"]["value"])
+        h = float(layer["height"]["value"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return pymupdf.Rect(x, y, x + w, y + h)
+
+
+def _run_rect(run: dict[str, Any]) -> pymupdf.Rect | None:
+    """Approximate bbox of a text run from baseline x/y + size. Width is
+    estimated — good enough for overlap detection."""
+    try:
+        x = float(run["x"]["value"])
+        y = float(run["y"]["value"])
+        size = float(run["font_size"]["value"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    width = max(len(run.get("text", "")), 1) * size * 0.55
+    return pymupdf.Rect(x, y - size, x + width, y)
+
+
+def _captured_rects(page: pymupdf.Page) -> list[tuple[pymupdf.Rect, Any]]:
+    """Re-extract page rect drawings in the *exact* order and with the
+    *exact* filter the importer's _shape_layers_from_drawings uses, so
+    the i-th captured rect lines up with the i-th UDM shape layer."""
+    out: list[tuple[pymupdf.Rect, Any]] = []
+    try:
+        drawings = page.get_drawings()
+    except Exception:
+        return out
+    for d in drawings:
+        fill = d.get("fill")
+        stroke = d.get("color")
+        if fill is None and stroke is None:
+            continue
+        for item in d.get("items", []):
+            if not item or item[0] != "re":
+                continue
+            try:
+                r = pymupdf.Rect(item[1])
+            except Exception:
+                continue
+            if r.width <= 0 or r.height <= 0:
+                continue
+            out.append((r, fill))
+    return out
+
+
+def _diff_shapes(
+    udm: dict[str, Any], work: pymupdf.Document
+) -> tuple[dict[int, list[dict[str, Any]]], bool]:
+    """Find rectangle shapes whose fill the user recolored.
+
+    UDM shape layers and source rect drawings are matched *by capture
+    order* (both produced by the same get_drawings() walk), not by
+    geometry — geometry matching is ambiguous when shapes stack. If the
+    counts don't line up for a page, shape diffing is skipped there
+    rather than risk a false positive.
+
+    Returns (edits_by_page, blocked). ``blocked`` is True if a recolored
+    shape overlaps an image — drawing the new fill over it would hide
+    the image, so the caller must fall back to a full render.
+    """
+    from collections import defaultdict
+
+    edits: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    blocked = False
+    pages = (udm.get("content") or {}).get("pages") or []
+
+    for i, page in enumerate(pages):
+        if i >= len(work):
+            continue
+        captured = _captured_rects(work[i])
+        udm_shapes = [
+            (li, layer)
+            for li, layer in enumerate(page.get("layers", []))
+            if layer.get("type") == "shape"
+        ]
+        if len(udm_shapes) != len(captured):
+            # Can't reliably align — skip shape diffing for this page.
+            continue
+
+        image_rects = [
+            r
+            for layer in page.get("layers", [])
+            if layer.get("type") == "image"
+            for r in [_image_layer_rect(layer)]
+            if r is not None
+        ]
+
+        for (li, layer), (_src_rect, src_fill) in zip(udm_shapes, captured):
+            udm_rect = _geom_rect(layer.get("geometry") or {})
+            if udm_rect is None:
+                continue
+            fill_ref = (layer.get("fill") or {}).get("color")
+            if not fill_ref:
+                continue
+            if not isinstance(src_fill, (tuple, list)) or len(src_fill) < 3:
+                continue
+            udm_fill = _color_rgb01(fill_ref)
+            if _rgb_close((src_fill[0], src_fill[1], src_fill[2]), udm_fill):
+                continue  # unchanged
+
+            if any(_rects_intersect(udm_rect, ir) for ir in image_rects):
+                blocked = True
+                continue
+            edits[i].append({"rect": udm_rect, "fill": udm_fill, "layer_index": li})
+
+    return dict(edits), blocked
+
+
+def _apply_shape_recolors(
+    work: pymupdf.Document,
+    udm: dict[str, Any],
+    edits: dict[int, list[dict[str, Any]]],
+    base_dir: Path,
+) -> None:
+    """Recolor each shape by drawing the new fill over it, then redrawing
+    anything that paints above it within the rect — later shapes and any
+    overlapping text (re-inserted with the run's own font)."""
+    pages = (udm.get("content") or {}).get("pages") or []
+    for page_idx, page_edits in edits.items():
+        if page_idx >= len(work):
+            continue
+        page = work[page_idx]
+        udm_page = pages[page_idx]
+        layers = udm_page.get("layers", [])
+        for e in page_edits:
+            rect: pymupdf.Rect = e["rect"]
+            page.draw_rect(rect, color=None, fill=e["fill"])
+
+            # Later shapes overlapping the rect would have been covered —
+            # redraw them in order on top.
+            for li in range(e["layer_index"] + 1, len(layers)):
+                layer = layers[li]
+                if layer.get("type") != "shape":
+                    continue
+                lr = _geom_rect(layer.get("geometry") or {})
+                if lr is None or not _rects_intersect(lr, rect):
+                    continue
+                lf = _color_rgb01((layer.get("fill") or {}).get("color") or {})
+                page.draw_rect(lr, color=None, fill=lf)
+
+            # Text overlapping the rect: re-insert on top with its own font.
+            for layer in layers:
+                if layer.get("type") != "text":
+                    continue
+                for run in layer.get("runs", []):
+                    rr = _run_rect(run)
+                    if rr is None or not _rects_intersect(rr, rect):
+                        continue
+                    size = float(run["font_size"]["value"])
+                    _insert_replacement(
+                        page,
+                        {
+                            "new_text": run.get("text", ""),
+                            "baseline": (
+                                float(run["x"]["value"]),
+                                float(run["y"]["value"]) - size * 0.2,
+                            ),
+                            "font_size": size,
+                            "color": run.get("color") or {},
+                            "font_id": run.get("font_id"),
+                        },
+                        udm,
+                        base_dir,
+                    )
 
 
 def _diff_ocr_runs(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:

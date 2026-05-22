@@ -135,6 +135,34 @@ function layerPaintOrderKey(
   return LAYER_PAINT_ORDER[layer.type as keyof typeof LAYER_PAINT_ORDER] ?? 99;
 }
 
+/** Open a native colour picker, pre-filled with ``initial`` (#rrggbb). */
+function pickColor(initial: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "color";
+    if (/^#[0-9a-fA-F]{6}$/.test(initial)) input.value = initial;
+    input.onchange = () => resolve(input.value);
+    input.click();
+  });
+}
+
+/** Best-effort #rrggbb for a shape's current fill, for the picker default. */
+function shapeFillHex(layer: UdmShapeLayer): string {
+  const lit = (layer.fill as { color?: { literal?: Record<string, unknown> } } | undefined)?.color
+    ?.literal;
+  if (lit) {
+    if (lit.kind === "hex" && typeof lit.hex === "string") return lit.hex;
+    if (lit.kind === "rgb") {
+      const h = (n: unknown) =>
+        Math.max(0, Math.min(255, Number(n) || 0))
+          .toString(16)
+          .padStart(2, "0");
+      return `#${h(lit.r)}${h(lit.g)}${h(lit.b)}`;
+    }
+  }
+  return "#888888";
+}
+
 function loadImageEl(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new window.Image();
@@ -273,6 +301,24 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   );
 
   const [placeMode, setPlaceMode] = useState(false);
+  const [recolorMode, setRecolorMode] = useState(false);
+  const [layout, setLayout] = useState<"list" | "grid">("list");
+
+  const recolorShape = useCallback(
+    async (pageIdx: number, layerIdx: number) => {
+      const fixedC = doc.content as FixedContent;
+      const layer = fixedC.pages[pageIdx]?.layers[layerIdx];
+      if (!layer || layer.type !== "shape") return;
+      const picked = await pickColor(shapeFillHex(layer));
+      if (!picked) return;
+      const next = structuredClone(doc) as Document;
+      const nextLayer = (next.content as FixedContent).pages[pageIdx]!.layers[layerIdx]!;
+      if (nextLayer.type !== "shape") return;
+      nextLayer.fill = { kind: "solid", color: { literal: { kind: "hex", hex: picked } } };
+      onChange(next);
+    },
+    [doc, onChange]
+  );
 
   // Region-scoped replacement: the user drags a box over part of an
   // image and only that area is swapped. Essential for flattened-image
@@ -362,10 +408,26 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         scale={scale}
         onScaleChange={setScale}
         placeMode={placeMode}
-        onTogglePlaceMode={() => setPlaceMode((p) => !p)}
+        onTogglePlaceMode={() => {
+          setPlaceMode((p) => !p);
+          setRecolorMode(false);
+        }}
+        recolorMode={recolorMode}
+        onToggleRecolorMode={() => {
+          setRecolorMode((r) => !r);
+          setPlaceMode(false);
+        }}
+        layout={layout}
+        onLayoutChange={setLayout}
       />
       <PageOpsPanel doc={doc} onChange={onChange} />
-      <div className="space-y-6 flex flex-col items-center">
+      <div
+        className={
+          layout === "grid"
+            ? "flex flex-wrap justify-center gap-6"
+            : "space-y-6 flex flex-col items-center"
+        }
+      >
         {fixed.pages.map((page, pageIdx) => (
           <div key={page.number}>
             <div className="label mb-2">
@@ -379,6 +441,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               editing={editing}
               editedKeys={editedKeys}
               placeMode={placeMode}
+              recolorMode={recolorMode}
               onStartEdit={setEditing}
               onCancelEdit={() => setEditing(null)}
               onCommitEdit={(state, commit) => {
@@ -387,6 +450,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               }}
               onReplaceImage={replaceImage}
               onPlaceRegion={(rect) => placeImageInRegion(pageIdx, rect)}
+              onRecolorShape={(layerIdx) => recolorShape(pageIdx, layerIdx)}
             />
           </div>
         ))}
@@ -520,6 +584,8 @@ function FixedPageEditor({
   onReplaceImage,
   placeMode,
   onPlaceRegion,
+  recolorMode,
+  onRecolorShape,
 }: {
   page: Page;
   pageIdx: number;
@@ -533,6 +599,8 @@ function FixedPageEditor({
   onReplaceImage: (imageId: string) => void;
   placeMode: boolean;
   onPlaceRegion: (rect: { x: number; y: number; w: number; h: number }) => void;
+  recolorMode: boolean;
+  onRecolorShape: (layerIdx: number) => void;
 }) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
@@ -573,7 +641,15 @@ function FixedPageEditor({
             )
             .map(({ layer, layerIdx }) => {
               if (layer.type === "shape") {
-                return <ShapeNode key={layerIdx} layer={layer} scale={scale} />;
+                return (
+                  <ShapeNode
+                    key={layerIdx}
+                    layer={layer}
+                    scale={scale}
+                    interactive={recolorMode}
+                    onClick={recolorMode ? () => onRecolorShape(layerIdx) : undefined}
+                  />
+                );
               }
               if (layer.type === "image") {
                 return <ImageNode key={layerIdx} layer={layer} resources={doc.resources} scale={scale} />;
@@ -917,7 +993,17 @@ function ImageNode({
   );
 }
 
-function ShapeNode({ layer, scale }: { layer: UdmShapeLayer; scale: number }) {
+function ShapeNode({
+  layer,
+  scale,
+  interactive,
+  onClick,
+}: {
+  layer: UdmShapeLayer;
+  scale: number;
+  interactive?: boolean;
+  onClick?: () => void;
+}) {
   const geom = layer.geometry as
     | { kind?: string; x?: never; y?: never; w?: never; h?: never }
     | undefined;
@@ -947,7 +1033,19 @@ function ShapeNode({ layer, scale }: { layer: UdmShapeLayer; scale: number }) {
       stroke={strokeColor}
       strokeWidth={strokeWidth}
       opacity={layer.opacity ?? 1}
-      listening={false}
+      listening={!!interactive}
+      onClick={onClick}
+      onTap={onClick}
+      onMouseEnter={
+        interactive
+          ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "pointer")
+          : undefined
+      }
+      onMouseLeave={
+        interactive
+          ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "default")
+          : undefined
+      }
     />
   );
 }
@@ -1147,46 +1245,56 @@ function EditorHeader({
   onScaleChange,
   placeMode,
   onTogglePlaceMode,
+  recolorMode,
+  onToggleRecolorMode,
+  layout,
+  onLayoutChange,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
   placeMode: boolean;
   onTogglePlaceMode: () => void;
+  recolorMode: boolean;
+  onToggleRecolorMode: () => void;
+  layout: "list" | "grid";
+  onLayoutChange: (l: "list" | "grid") => void;
 }) {
   const presets = [0.5, 0.75, 1, 1.25, 1.5];
+  const modeBtn = (active: boolean) =>
+    `font-mono text-xs px-2 py-1 border transition-colors ${
+      active
+        ? "bg-accent text-accent-fg border-accent"
+        : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
+    }`;
+  const hint = placeMode
+    ? "drag a box over the area to replace, then pick an image"
+    : recolorMode
+      ? "click any shape to recolor it"
+      : "click any text to edit · enter to commit · esc to cancel";
   return (
-    <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2">
-      <div className="flex items-center gap-1">
+    <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">
+      <div className="flex items-center gap-1 flex-wrap">
         <span className="label mr-2">scale</span>
         {presets.map((p) => (
-          <button
-            key={p}
-            onClick={() => onScaleChange(p)}
-            className={`font-mono text-xs px-2 py-1 border transition-colors ${
-              scale === p
-                ? "bg-accent text-accent-fg border-accent"
-                : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
-            }`}
-          >
+          <button key={p} onClick={() => onScaleChange(p)} className={modeBtn(scale === p)}>
             {Math.round(p * 100)}%
           </button>
         ))}
-        <button
-          onClick={onTogglePlaceMode}
-          className={`font-mono text-xs px-2 py-1 border transition-colors ml-3 ${
-            placeMode
-              ? "bg-accent text-accent-fg border-accent"
-              : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
-          }`}
-        >
-          ⊕ place image in region
+        <span className="label mx-2">view</span>
+        <button onClick={() => onLayoutChange("list")} className={modeBtn(layout === "list")}>
+          ☰ list
+        </button>
+        <button onClick={() => onLayoutChange("grid")} className={modeBtn(layout === "grid")}>
+          ▦ grid
+        </button>
+        <button onClick={onTogglePlaceMode} className={`${modeBtn(placeMode)} ml-3`}>
+          ⊕ place image
+        </button>
+        <button onClick={onToggleRecolorMode} className={modeBtn(recolorMode)}>
+          ◐ recolor shape
         </button>
       </div>
-      <div className="label text-muted">
-        {placeMode
-          ? "drag a box over the area to replace, then pick an image"
-          : "click any text to edit · enter to commit · esc to cancel"}
-      </div>
+      <div className="label text-muted">{hint}</div>
     </div>
   );
 }

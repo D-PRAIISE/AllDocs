@@ -18,11 +18,18 @@ interface UdmViewerProps {
 
 export function UdmViewer({ doc }: UdmViewerProps) {
   const [scale, setScale] = useState(1);
+  const [layout, setLayout] = useState<"list" | "grid">("list");
   return (
     <div className="space-y-4">
       <FontFaceStyles resources={doc.resources} />
       <DocumentSummary doc={doc} />
-      <ContentRenderer doc={doc} scale={scale} onScaleChange={setScale} />
+      <ContentRenderer
+        doc={doc}
+        scale={scale}
+        onScaleChange={setScale}
+        layout={layout}
+        onLayoutChange={setLayout}
+      />
     </div>
   );
 }
@@ -88,17 +95,32 @@ function ContentRenderer({
   doc,
   scale,
   onScaleChange,
+  layout,
+  onLayoutChange,
 }: {
   doc: Document;
   scale: number;
   onScaleChange: (s: number) => void;
+  layout: "list" | "grid";
+  onLayoutChange: (l: "list" | "grid") => void;
 }) {
   if (doc.mode === "fixed") {
     const fixed = doc.content as FixedContent;
     return (
       <div>
-        <ScaleControl scale={scale} onScaleChange={onScaleChange} />
-        <div className="space-y-6 flex flex-col items-center">
+        <ScaleControl
+          scale={scale}
+          onScaleChange={onScaleChange}
+          layout={layout}
+          onLayoutChange={onLayoutChange}
+        />
+        <div
+          className={
+            layout === "grid"
+              ? "flex flex-wrap justify-center gap-6"
+              : "space-y-6 flex flex-col items-center"
+          }
+        >
           {fixed.pages.map((page) => (
             <div key={page.number}>
               <div className="label mb-2">
@@ -129,27 +151,36 @@ function ContentRenderer({
 function ScaleControl({
   scale,
   onScaleChange,
+  layout,
+  onLayoutChange,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
+  layout: "list" | "grid";
+  onLayoutChange: (l: "list" | "grid") => void;
 }) {
   const presets = [0.5, 0.75, 1, 1.25, 1.5];
+  const cls = (active: boolean) =>
+    `font-mono text-xs px-2 py-1 border transition-colors ${
+      active
+        ? "bg-accent text-accent-fg border-accent"
+        : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
+    }`;
   return (
-    <div className="flex items-center gap-1 mb-3">
+    <div className="flex items-center gap-1 mb-3 flex-wrap">
       <span className="label mr-2">scale</span>
       {presets.map((p) => (
-        <button
-          key={p}
-          onClick={() => onScaleChange(p)}
-          className={`font-mono text-xs px-2 py-1 border transition-colors ${
-            scale === p
-              ? "bg-accent text-accent-fg border-accent"
-              : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
-          }`}
-        >
+        <button key={p} onClick={() => onScaleChange(p)} className={cls(scale === p)}>
           {Math.round(p * 100)}%
         </button>
       ))}
+      <span className="label mx-2">view</span>
+      <button onClick={() => onLayoutChange("list")} className={cls(layout === "list")}>
+        ☰ list
+      </button>
+      <button onClick={() => onLayoutChange("grid")} className={cls(layout === "grid")}>
+        ▦ grid
+      </button>
     </div>
   );
 }
