@@ -135,6 +135,39 @@ function layerPaintOrderKey(
   return LAYER_PAINT_ORDER[layer.type as keyof typeof LAYER_PAINT_ORDER] ?? 99;
 }
 
+function loadImageEl(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("image load failed"));
+    img.src = src;
+  });
+}
+
+/** Composite ``overlayUrl`` into a sub-rectangle of ``baseUrl`` and return
+ * the result as a PNG data URL. ``region`` is in the base image's own
+ * intrinsic pixels. Used for region-scoped image replacement: the user
+ * frames part of a (possibly page-sized) image and only that area is
+ * swapped — the rest of the image is preserved. */
+async function compositeImageIntoRegion(
+  baseUrl: string,
+  baseW: number,
+  baseH: number,
+  overlayUrl: string,
+  region: { x: number; y: number; w: number; h: number }
+): Promise<string> {
+  const canvas = document.createElement("canvas");
+  canvas.width = baseW;
+  canvas.height = baseH;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("no 2d context");
+  const base = await loadImageEl(baseUrl);
+  ctx.drawImage(base, 0, 0, baseW, baseH);
+  const overlay = await loadImageEl(overlayUrl);
+  ctx.drawImage(overlay, region.x, region.y, region.w, region.h);
+  return canvas.toDataURL("image/png");
+}
+
 function konvaFontStyle(font: FontResource | undefined): string {
   if (!font) return "normal";
   const weight = font.weight >= 600 ? "bold" : "normal";
@@ -239,9 +272,98 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [doc, onChange]
   );
 
+  const [placeMode, setPlaceMode] = useState(false);
+
+  // Region-scoped replacement: the user drags a box over part of an
+  // image and only that area is swapped. Essential for flattened-image
+  // PDFs (a whole scanned page is one image) — replacing the resource
+  // outright would swap the entire page.
+  const placeImageInRegion = useCallback(
+    async (pageIdx: number, rect: { x: number; y: number; w: number; h: number }) => {
+      const fixedContent = doc.content as FixedContent;
+      const page = fixedContent.pages[pageIdx];
+      if (!page) return;
+
+      // Pick the image layer the region falls on — largest one whose
+      // bounds contain the region's center.
+      const cx = rect.x + rect.w / 2;
+      const cy = rect.y + rect.h / 2;
+      let base: UdmImageLayer | null = null;
+      let bestArea = -1;
+      for (const layer of page.layers) {
+        if (layer.type !== "image") continue;
+        const ix = lengthToPx(layer.x) * scale;
+        const iy = lengthToPx(layer.y) * scale;
+        const iw = lengthToPx(layer.width) * scale;
+        const ih = lengthToPx(layer.height) * scale;
+        if (cx < ix || cx > ix + iw || cy < iy || cy > iy + ih) continue;
+        const area = iw * ih;
+        if (area > bestArea) {
+          bestArea = area;
+          base = layer;
+        }
+      }
+      if (!base) {
+        setPlaceMode(false);
+        return;
+      }
+
+      const resource = doc.resources.images.find((i) => i.id === base!.image_id);
+      if (!resource || !resource.data_ref || resource.data_ref.startsWith("xref:")) {
+        setPlaceMode(false);
+        return;
+      }
+
+      const picked = await pickImageFile();
+      if (!picked) {
+        setPlaceMode(false);
+        return;
+      }
+
+      // Region (canvas px) -> the base image's intrinsic pixels.
+      const ix = lengthToPx(base.x) * scale;
+      const iy = lengthToPx(base.y) * scale;
+      const iw = lengthToPx(base.width) * scale;
+      const ih = lengthToPx(base.height) * scale;
+      const region = {
+        x: ((rect.x - ix) / iw) * resource.width,
+        y: ((rect.y - iy) / ih) * resource.height,
+        w: (rect.w / iw) * resource.width,
+        h: (rect.h / ih) * resource.height,
+      };
+
+      try {
+        const composited = await compositeImageIntoRegion(
+          resource.data_ref,
+          resource.width,
+          resource.height,
+          picked.dataUrl,
+          region
+        );
+        const next = structuredClone(doc) as Document;
+        const target = next.resources.images.find((i) => i.id === base!.image_id);
+        if (target) {
+          target.data_ref = composited;
+          target.format = "png";
+          onChange(next);
+        }
+      } catch {
+        // Compositing failed (e.g. image load) — leave the doc untouched.
+      } finally {
+        setPlaceMode(false);
+      }
+    },
+    [doc, onChange, scale]
+  );
+
   return (
     <div className="space-y-4">
-      <EditorHeader scale={scale} onScaleChange={setScale} />
+      <EditorHeader
+        scale={scale}
+        onScaleChange={setScale}
+        placeMode={placeMode}
+        onTogglePlaceMode={() => setPlaceMode((p) => !p)}
+      />
       <div className="space-y-6 flex flex-col items-center">
         {fixed.pages.map((page, pageIdx) => (
           <div key={page.number}>
@@ -255,6 +377,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               scale={scale}
               editing={editing}
               editedKeys={editedKeys}
+              placeMode={placeMode}
               onStartEdit={setEditing}
               onCancelEdit={() => setEditing(null)}
               onCommitEdit={(state, commit) => {
@@ -262,6 +385,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
                 setEditing(null);
               }}
               onReplaceImage={replaceImage}
+              onPlaceRegion={(rect) => placeImageInRegion(pageIdx, rect)}
             />
           </div>
         ))}
@@ -292,6 +416,8 @@ function FixedPageEditor({
   onCancelEdit,
   onCommitEdit,
   onReplaceImage,
+  placeMode,
+  onPlaceRegion,
 }: {
   page: Page;
   pageIdx: number;
@@ -303,6 +429,8 @@ function FixedPageEditor({
   onCancelEdit: () => void;
   onCommitEdit: (s: EditingState, commit: EditCommit) => void;
   onReplaceImage: (imageId: string) => void;
+  placeMode: boolean;
+  onPlaceRegion: (rect: { x: number; y: number; w: number; h: number }) => void;
 }) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
@@ -357,7 +485,65 @@ function FixedPageEditor({
           onCancel={onCancelEdit}
         />
       ) : null}
-      <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
+      {placeMode ? (
+        <RegionSelectOverlay onComplete={onPlaceRegion} />
+      ) : (
+        <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
+      )}
+    </div>
+  );
+}
+
+/** Full-page transparent overlay active in "place image" mode. The user
+ * drags a rectangle; on release it's reported (canvas px) so the caller
+ * can composite a picked image into that region. */
+function RegionSelectOverlay({
+  onComplete,
+}: {
+  onComplete: (rect: { x: number; y: number; w: number; h: number }) => void;
+}) {
+  const [start, setStart] = useState<{ x: number; y: number } | null>(null);
+  const [cur, setCur] = useState<{ x: number; y: number } | null>(null);
+
+  const rect =
+    start && cur
+      ? {
+          x: Math.min(start.x, cur.x),
+          y: Math.min(start.y, cur.y),
+          w: Math.abs(cur.x - start.x),
+          h: Math.abs(cur.y - start.y),
+        }
+      : null;
+
+  const localPoint = (e: React.MouseEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  };
+
+  return (
+    <div
+      className="absolute inset-0 z-30"
+      style={{ cursor: "crosshair" }}
+      onMouseDown={(e) => {
+        const p = localPoint(e);
+        setStart(p);
+        setCur(p);
+      }}
+      onMouseMove={(e) => {
+        if (start) setCur(localPoint(e));
+      }}
+      onMouseUp={() => {
+        if (rect && rect.w >= 8 && rect.h >= 8) onComplete(rect);
+        setStart(null);
+        setCur(null);
+      }}
+    >
+      {rect ? (
+        <div
+          className="absolute border-2 border-accent bg-accent/15 pointer-events-none"
+          style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -833,7 +1019,17 @@ function TextEditOverlay({
   );
 }
 
-function EditorHeader({ scale, onScaleChange }: { scale: number; onScaleChange: (s: number) => void }) {
+function EditorHeader({
+  scale,
+  onScaleChange,
+  placeMode,
+  onTogglePlaceMode,
+}: {
+  scale: number;
+  onScaleChange: (s: number) => void;
+  placeMode: boolean;
+  onTogglePlaceMode: () => void;
+}) {
   const presets = [0.5, 0.75, 1, 1.25, 1.5];
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2">
@@ -852,8 +1048,22 @@ function EditorHeader({ scale, onScaleChange }: { scale: number; onScaleChange: 
             {Math.round(p * 100)}%
           </button>
         ))}
+        <button
+          onClick={onTogglePlaceMode}
+          className={`font-mono text-xs px-2 py-1 border transition-colors ml-3 ${
+            placeMode
+              ? "bg-accent text-accent-fg border-accent"
+              : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
+          }`}
+        >
+          ⊕ place image in region
+        </button>
       </div>
-      <div className="label text-muted">click any text to edit · enter to commit · esc to cancel</div>
+      <div className="label text-muted">
+        {placeMode
+          ? "drag a box over the area to replace, then pick an image"
+          : "click any text to edit · enter to commit · esc to cancel"}
+      </div>
     </div>
   );
 }
