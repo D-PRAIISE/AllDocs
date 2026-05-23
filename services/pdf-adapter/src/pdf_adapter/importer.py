@@ -525,15 +525,26 @@ _WIDGET_KIND = {
 
 def _form_fields_for(page: pymupdf.Page) -> list[dict[str, Any]]:
     """Read AcroForm widgets on the page into UDM-friendly field dicts.
+
     ``_meta.xref`` is the widget xref so the exporter can update its
     value in place. ``_meta.type_str`` preserves the original PyMuPDF
     type string for unsupported kinds (radio/signature/etc.) so they
-    survive a round-trip."""
+    survive a round-trip.
+
+    If the page has no native widgets, fall back to heuristic detection
+    (``_form_detect``) — visual-only forms (e.g. Word-exported PDFs with
+    underlined blanks + checkbox squares) become fillable. Detected
+    fields are marked ``_meta.auto_detected`` so the editor can flag
+    them, and ``_meta.added`` so the exporter creates real widgets.
+    """
+    from . import _form_detect
+
     out: list[dict[str, Any]] = []
     try:
         widgets = list(page.widgets())
     except Exception:
-        return out
+        widgets = []
+
     for w in widgets:
         try:
             type_str = w.field_type_string or ""
@@ -553,6 +564,27 @@ def _form_fields_for(page: pymupdf.Page) -> list[dict[str, Any]]:
             out.append(field)
         except Exception:
             continue
+
+    if not out:
+        candidates = _form_detect.detect_form_candidates(page)
+        if len(candidates) >= _form_detect.MIN_CANDIDATES_TO_AUTOFILL:
+            for c in candidates:
+                r = c["rect"]
+                out.append(
+                    {
+                        "kind": c["kind"],
+                        "name": c.get("name") or "",
+                        "rect": {
+                            "x": float(r.x0),
+                            "y": float(r.y0),
+                            "w": float(r.width),
+                            "h": float(r.height),
+                        },
+                        "value": False if c["kind"] == "checkbox" else "",
+                        "_meta": {"added": True, "auto_detected": True},
+                    }
+                )
+
     return out
 
 
