@@ -162,12 +162,49 @@ function ImageLayerView({
   const w = lengthToPx(layer.width) * scale;
   const h = lengthToPx(layer.height) * scale;
 
-  // data_ref of "xref:N" is opaque (importer ran without asset extraction).
-  // Anything else is treated as a URL — relative refs resolve against the
-  // host page, absolute paths and http(s) work directly.
   const ref = img?.data_ref ?? "";
   const isOpaque = !ref || ref.startsWith("xref:");
   const src = isOpaque ? undefined : ref;
+
+  // PDF clip path: when set, the image is restricted to a sub-window.
+  // Wrap in an overflow-hidden box at the clip rect, then position the
+  // image inside so it lands at its full transform but only the
+  // intersection shows.
+  const clip = layer._meta?.clip;
+  if (clip && src) {
+    const ptToPx = (pt: number) => pt * (96 / 72) * scale;
+    const cx = ptToPx(clip.x);
+    const cy = ptToPx(clip.y);
+    const cw = ptToPx(clip.w);
+    const ch = ptToPx(clip.h);
+    return (
+      <div
+        className="absolute overflow-hidden"
+        style={{
+          left: `${cx}px`,
+          top: `${cy}px`,
+          width: `${cw}px`,
+          height: `${ch}px`,
+          opacity: layer.opacity ?? 1,
+        }}
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={img?.alt_text ?? ""}
+          style={{
+            position: "absolute",
+            left: `${x - cx}px`,
+            top: `${y - cy}px`,
+            width: `${w}px`,
+            height: `${h}px`,
+            objectFit: "fill",
+            transform: layer.rotation ? `rotate(${layer.rotation}deg)` : undefined,
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div

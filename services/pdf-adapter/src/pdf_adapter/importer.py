@@ -317,7 +317,7 @@ def _page_to_udm(
     if text_runs:
         layers.append({"type": "text", "runs": text_runs})
 
-    for xref, rect, opacity in _image_placements(page, doc):
+    for xref, rect, opacity, clip in _image_placements(page, doc):
         image_id = _ensure_image(images, xref, doc)
         layer: dict[str, Any] = {
             "type": "image",
@@ -329,6 +329,17 @@ def _page_to_udm(
         }
         if opacity < 1.0:
             layer["opacity"] = opacity
+        # A clip path restricts what's visible. Without it the AllDocs
+        # canvas re-renders the whole (often page-sized, off-page) image.
+        if clip is not None:
+            layer["_meta"] = {
+                "clip": {
+                    "x": round(clip.x0, 2),
+                    "y": round(clip.y0, 2),
+                    "w": round(clip.width, 2),
+                    "h": round(clip.height, 2),
+                }
+            }
         layers.append(layer)
 
     # Vector drawings — filled/stroked rectangles capture page backgrounds and
@@ -353,8 +364,12 @@ def _page_to_udm(
 def _image_placements(
     page: pymupdf.Page,
     doc: pymupdf.Document,
-) -> list[tuple[int, pymupdf.Rect, float]]:
-    """Return (xref, rect, opacity) for every image placement on the page.
+) -> list[tuple[int, pymupdf.Rect, float, pymupdf.Rect | None]]:
+    """Return (xref, rect, opacity, clip) for every image placement.
+
+    ``clip`` is the visible-window rectangle when the image is restricted
+    by a clip path (None = unclipped). See _clip.py — without it a
+    clipped, often page-sized image renders at full size on the canvas.
 
     ``page.get_image_rects`` only finds images placed directly in the
     page content stream. Images placed *through a Form XObject* — a
@@ -374,13 +389,46 @@ def _image_placements(
     their opacity — watermarks are drawn faint via an ExtGState ``ca``
     (e.g. ``.08``), and without that they'd render fully opaque.
     """
+    from . import _clip
+
     xrefs = [img[0] for img in page.get_images(full=True)]
-    placements: list[tuple[int, pymupdf.Rect, float]] = []
+    placements: list[tuple[int, pymupdf.Rect, float, pymupdf.Rect | None]] = []
     direct: list[pymupdf.Rect] = []
+
+    # Clip paths per image placement (xref + transform -> clip rect).
+    try:
+        clip_entries = _clip.extract_image_clips(page, doc)
+    except Exception:
+        clip_entries = []
+
+    def clip_for(xref: int, rect: pymupdf.Rect) -> pymupdf.Rect | None:
+        best: pymupdf.Rect | None = None
+        best_d = 6.0  # match tolerance in points
+        for e in clip_entries:
+            if e.get("xref") != xref:
+                continue
+            t = e.get("transform")
+            if t is None:
+                continue
+            d = abs(t.x0 - rect.x0) + abs(t.y0 - rect.y0) + abs(t.x1 - rect.x1) + abs(t.y1 - rect.y1)
+            if d < best_d:
+                best_d = d
+                best = e.get("clip")
+        if best is None:
+            return None
+        # Only report a clip that meaningfully restricts the image.
+        if (
+            abs(best.x0 - rect.x0) < 2
+            and abs(best.y0 - rect.y0) < 2
+            and abs(best.x1 - rect.x1) < 2
+            and abs(best.y1 - rect.y1) < 2
+        ):
+            return None
+        return best
 
     for xref in xrefs:
         for rect in page.get_image_rects(xref):
-            placements.append((xref, rect, 1.0))
+            placements.append((xref, rect, 1.0, clip_for(xref, rect)))
             direct.append(rect)
 
     try:
@@ -404,7 +452,7 @@ def _image_placements(
     if nested and len(xrefs) == 1:
         opacity = _page_min_gs_alpha(page, doc)
         for r in nested:
-            placements.append((xrefs[0], r, opacity))
+            placements.append((xrefs[0], r, opacity, clip_for(xrefs[0], r)))
 
     return placements
 

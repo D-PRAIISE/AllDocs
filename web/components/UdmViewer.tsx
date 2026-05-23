@@ -120,10 +120,12 @@ function ContentRenderer({
         />
         <div
           className={
-            layout === "grid"
+            (layout === "grid"
               ? "flex flex-wrap justify-center gap-6"
-              : "space-y-6 flex flex-col items-center"
+              : "space-y-6 flex flex-col items-center") +
+            " overflow-y-auto overflow-x-auto border border-border bg-bg/40 p-4"
           }
+          style={{ maxHeight: "75vh" }}
         >
           {fixed.pages.map((page) => (
             <div key={page.number}>

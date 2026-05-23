@@ -168,6 +168,14 @@ export interface ImageLayer {
   height: Length;
   rotation?: number;
   opacity?: number;
+  /** Visible-window rectangle in PDF points (top-left origin). When
+   * present, only this sub-rectangle of the image's transform rect
+   * should render — used for clipped placements (e.g. a photo placed
+   * with a huge off-page transform, restricted by a PDF clip path). */
+  _meta?: {
+    clip?: { x: number; y: number; w: number; h: number };
+    [k: string]: unknown;
+  };
 }
 
 export interface ShapeLayer {

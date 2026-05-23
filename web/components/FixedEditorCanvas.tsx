@@ -1,7 +1,7 @@
 "use client";
 
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Image as KonvaImage, Layer, Rect as KonvaRect, Stage, Text as KonvaText } from "react-konva";
+import { Group, Image as KonvaImage, Layer, Rect as KonvaRect, Stage, Text as KonvaText } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import useImage from "use-image";
 
@@ -525,10 +525,12 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       <PageOpsPanel doc={doc} onChange={onChange} />
       <div
         className={
-          layout === "grid"
+          (layout === "grid"
             ? "flex flex-wrap justify-center gap-6"
-            : "space-y-6 flex flex-col items-center"
+            : "space-y-6 flex flex-col items-center") +
+          " overflow-y-auto overflow-x-auto border border-border bg-bg/40 p-4"
         }
+        style={{ maxHeight: "75vh" }}
       >
         {fixed.pages.map((page, pageIdx) => (
           <div key={page.number}>
@@ -1146,7 +1148,7 @@ function ImageNode({
     );
   }
 
-  return (
+  const img2 = (
     <KonvaImage
       image={image}
       x={x}
@@ -1169,6 +1171,25 @@ function ImageNode({
       }
     />
   );
+
+  // PDF clip path: restrict the image to its visible window. Without this
+  // a photo placed with a large off-page transform (typical for Canva-style
+  // designs) renders at full size instead of the intended small window.
+  const clip = layer._meta?.clip;
+  if (clip) {
+    const ptToPx = (pt: number) => pt * (96 / 72) * scale;
+    return (
+      <Group
+        clipX={ptToPx(clip.x)}
+        clipY={ptToPx(clip.y)}
+        clipWidth={ptToPx(clip.w)}
+        clipHeight={ptToPx(clip.h)}
+      >
+        {img2}
+      </Group>
+    );
+  }
+  return img2;
 }
 
 function ShapeNode({
