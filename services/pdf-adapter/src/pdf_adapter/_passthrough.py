@@ -71,6 +71,15 @@ def compute_fingerprint(udm: dict[str, Any]) -> str:
                     )
             elif t == "image":
                 h.update(f"i:{layer.get('image_id', '')}\n".encode())
+            elif t == "form":
+                for field in layer.get("fields", []) or []:
+                    h.update(
+                        (
+                            f"ff:{field.get('name', '')}|"
+                            f"{field.get('kind', '')}|"
+                            f"{field.get('value', '')}\n"
+                        ).encode("utf-8")
+                    )
             elif t == "shape":
                 geom = layer.get("geometry") or {}
                 # Include fill + stroke so a recolor invalidates passthrough.

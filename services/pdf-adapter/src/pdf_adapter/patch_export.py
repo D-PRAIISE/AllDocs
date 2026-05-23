@@ -93,7 +93,8 @@ def try_patch_export(
         added_runs = _diff_added_runs(udm)
         added_images = _diff_added_images(udm)
         added_annots = _diff_added_annotations(udm)
-        has_additions = bool(added_runs or added_images or added_annots)
+        form_ops = _diff_form_fields(udm, work)
+        has_additions = bool(added_runs or added_images or added_annots or form_ops)
 
         # OCR docs (scanned / rasterized — text sits over an image) take a
         # separate path: there are no source text spans to redact, so we
@@ -111,6 +112,7 @@ def try_patch_export(
                     _insert_replacement(page, e, udm, base_dir)
             _apply_added_content(work, udm, added_runs, added_images, base_dir)
             _apply_added_annotations(work, added_annots)
+            _apply_form_fields(work, form_ops)
             _apply_image_swaps(work, image_swaps)
             work.save(str(output_path), garbage=4, deflate=True, clean=True)
             return True
@@ -153,6 +155,7 @@ def try_patch_export(
         _apply_shape_recolors(work, udm, shape_edits, base_dir)
         _apply_added_content(work, udm, added_runs, added_images, base_dir)
         _apply_added_annotations(work, added_annots)
+        _apply_form_fields(work, form_ops)
         _apply_image_swaps(work, image_swaps)
         work.save(str(output_path), garbage=4, deflate=True, clean=True)
         return True
@@ -693,6 +696,98 @@ def _apply_added_content(
             continue
         for edit in runs:
             _insert_replacement(work[page_idx], edit, udm, base_dir)
+
+
+def _diff_form_fields(
+    udm: dict[str, Any], work: pymupdf.Document
+) -> dict[int, list[dict[str, Any]]]:
+    """Per-page list of form-field operations: ``{action: "add"|"update", ...}``.
+
+      - ``add``: the field has ``_meta.added`` — create a new widget.
+      - ``update``: the field exists in the source (matched by name)
+        and its value differs from the live widget value.
+    """
+    from collections import defaultdict
+
+    ops: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    pages = (udm.get("content") or {}).get("pages") or []
+    for i, page in enumerate(pages):
+        if i >= len(work):
+            continue
+        try:
+            live = {w.field_name: w for w in work[i].widgets() if w.field_name}
+        except Exception:
+            live = {}
+        for layer in page.get("layers", []):
+            if layer.get("type") != "form":
+                continue
+            for field in layer.get("fields", []) or []:
+                meta = field.get("_meta") or {}
+                name = field.get("name") or ""
+                value = field.get("value")
+                if meta.get("added"):
+                    ops[i].append({"action": "add", "field": field})
+                    continue
+                w = live.get(name)
+                if w is None:
+                    continue
+                if str(w.field_value or "") != str(value if value is not None else ""):
+                    ops[i].append({"action": "update", "name": name, "value": value})
+    return dict(ops)
+
+
+def _apply_form_fields(
+    work: pymupdf.Document,
+    ops_by_page: dict[int, list[dict[str, Any]]],
+) -> None:
+    for page_idx, ops in ops_by_page.items():
+        if page_idx >= len(work):
+            continue
+        page = work[page_idx]
+        # Update existing widgets first (matched by name).
+        updates = {o["name"]: o["value"] for o in ops if o["action"] == "update"}
+        if updates:
+            try:
+                for w in page.widgets():
+                    if w.field_name in updates:
+                        v = updates[w.field_name]
+                        try:
+                            if w.field_type_string == "CheckBox":
+                                # PyMuPDF expects 'Yes' / 'Off' for checkbox values.
+                                w.field_value = bool(v) and "Yes" or "Off"
+                            else:
+                                w.field_value = "" if v is None else str(v)
+                            w.update()
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+        # Add new widgets.
+        for op in ops:
+            if op["action"] != "add":
+                continue
+            field = op["field"]
+            try:
+                kind = field.get("kind", "text")
+                rect = field.get("rect") or {}
+                r = pymupdf.Rect(
+                    float(rect["x"]),
+                    float(rect["y"]),
+                    float(rect["x"]) + float(rect["w"]),
+                    float(rect["y"]) + float(rect["h"]),
+                )
+                widget = pymupdf.Widget()
+                widget.rect = r
+                widget.field_name = field.get("name") or f"field_{id(field)}"
+                if kind == "checkbox":
+                    widget.field_type = pymupdf.PDF_WIDGET_TYPE_CHECKBOX
+                    widget.field_value = "Yes" if field.get("value") else "Off"
+                else:
+                    widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
+                    widget.field_value = str(field.get("value") or "")
+                page.add_widget(widget)
+            except Exception:
+                continue
 
 
 def _diff_added_annotations(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:

@@ -348,6 +348,13 @@ def _page_to_udm(
     # land in v0.2.
     layers.extend(_shape_layers_from_drawings(page))
 
+    # AcroForm widgets — present on real fillable PDFs (registration forms,
+    # tax forms, contracts). Each becomes a UDM form field that the editor
+    # renders as a fillable input.
+    form_fields = _form_fields_for(page)
+    if form_fields:
+        layers.append({"type": "form", "fields": form_fields})
+
     return {
         "number": number,
         "width": _length(page.rect.width, "pt"),
@@ -504,6 +511,49 @@ def _rects_close(a: pymupdf.Rect, b: pymupdf.Rect, tol: float = 1.0) -> bool:
         and abs(a.x1 - b.x1) <= tol
         and abs(a.y1 - b.y1) <= tol
     )
+
+
+_WIDGET_KIND = {
+    "Text": "text",
+    "CheckBox": "checkbox",
+    "ListBox": "listbox",
+    "ComboBox": "combobox",
+    "RadioButton": "radio",
+    "Signature": "signature",
+}
+
+
+def _form_fields_for(page: pymupdf.Page) -> list[dict[str, Any]]:
+    """Read AcroForm widgets on the page into UDM-friendly field dicts.
+    ``_meta.xref`` is the widget xref so the exporter can update its
+    value in place. ``_meta.type_str`` preserves the original PyMuPDF
+    type string for unsupported kinds (radio/signature/etc.) so they
+    survive a round-trip."""
+    out: list[dict[str, Any]] = []
+    try:
+        widgets = list(page.widgets())
+    except Exception:
+        return out
+    for w in widgets:
+        try:
+            type_str = w.field_type_string or ""
+            r = w.rect
+            field: dict[str, Any] = {
+                "kind": _WIDGET_KIND.get(type_str, "unknown"),
+                "name": w.field_name or "",
+                "rect": {
+                    "x": float(r.x0),
+                    "y": float(r.y0),
+                    "w": float(r.width),
+                    "h": float(r.height),
+                },
+                "value": w.field_value,
+                "_meta": {"xref": int(w.xref), "type_str": type_str},
+            }
+            out.append(field)
+        except Exception:
+            continue
+    return out
 
 
 def _shape_layers_from_drawings(page: pymupdf.Page) -> list[dict[str, Any]]:

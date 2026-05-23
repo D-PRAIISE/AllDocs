@@ -32,7 +32,9 @@ type EditorMode =
   | "add-image"
   | "highlight"
   | "comment"
-  | "ink";
+  | "ink"
+  | "add-field-text"
+  | "add-field-checkbox";
 
 /** What a text edit commits: the new string plus its formatting. */
 interface EditCommit {
@@ -322,6 +324,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   const highlightMode = mode === "highlight";
   const commentMode = mode === "comment";
   const inkMode = mode === "ink";
+  const addFieldTextMode = mode === "add-field-text";
+  const addFieldCheckboxMode = mode === "add-field-checkbox";
   const toggleMode = (m: EditorMode) => setMode((cur) => (cur === m ? "none" : m));
   const [layout, setLayout] = useState<"list" | "grid">("list");
 
@@ -555,6 +559,56 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [addAnnotationLayer, scale]
   );
 
+  // ---- form fields --------------------------------------------------
+
+  const updateFormField = useCallback(
+    (pageIdx: number, layerIdx: number, fieldIdx: number, value: unknown) => {
+      const next = structuredClone(doc) as Document;
+      const layer = (next.content as FixedContent).pages[pageIdx]?.layers[layerIdx];
+      if (!layer || layer.type !== "form") return;
+      const fields = (layer as unknown as { fields: Array<Record<string, unknown>> }).fields;
+      const field = fields?.[fieldIdx];
+      if (!field) return;
+      field.value = value;
+      onChange(next);
+    },
+    [doc, onChange]
+  );
+
+  const addFormField = useCallback(
+    (pageIdx: number, kind: "text" | "checkbox", cx: number, cy: number) => {
+      const next = structuredClone(doc) as Document;
+      const page = (next.content as FixedContent).pages[pageIdx];
+      if (!page) return;
+      const k = (72 / 96) / scale;
+      const xPt = cx * k;
+      const yPt = cy * k;
+      const sizePt =
+        kind === "checkbox"
+          ? { w: 14, h: 14 }
+          : { w: 200, h: 22 };
+      // Find or create a form layer on this page.
+      let formLayer = page.layers.find((l) => l.type === "form") as
+        | { type: "form"; fields: Array<Record<string, unknown>> }
+        | undefined;
+      if (!formLayer) {
+        formLayer = { type: "form", fields: [] };
+        page.layers.push(formLayer as never);
+      }
+      const idx = formLayer.fields.length;
+      formLayer.fields.push({
+        kind,
+        name: `field_user_${Date.now()}_${idx}`,
+        rect: { x: xPt, y: yPt, w: sizePt.w, h: sizePt.h },
+        value: kind === "checkbox" ? false : "",
+        _meta: { added: true },
+      });
+      onChange(next);
+      setMode("none");
+    },
+    [doc, onChange, scale]
+  );
+
   // Reposition a dragged text run / image layer (added content only).
   const moveRun = useCallback(
     (pageIdx: number, layerIdx: number, runIdx: number, xPt: number, yPt: number) => {
@@ -626,6 +680,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               highlightMode={highlightMode}
               commentMode={commentMode}
               inkMode={inkMode}
+              addFieldTextMode={addFieldTextMode}
+              addFieldCheckboxMode={addFieldCheckboxMode}
               onStartEdit={setEditing}
               onCancelEdit={() => setEditing(null)}
               onCommitEdit={(state, commit) => {
@@ -640,6 +696,10 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               onAddHighlight={(rect) => addHighlight(pageIdx, rect)}
               onAddComment={(cx, cy) => addComment(pageIdx, cx, cy)}
               onAddInk={(strokes) => addInk(pageIdx, strokes)}
+              onAddField={(kind, cx, cy) => addFormField(pageIdx, kind, cx, cy)}
+              onUpdateField={(layerIdx, fieldIdx, value) =>
+                updateFormField(pageIdx, layerIdx, fieldIdx, value)
+              }
               onMoveRun={(layerIdx, runIdx, xPt, yPt) =>
                 moveRun(pageIdx, layerIdx, runIdx, xPt, yPt)
               }
@@ -790,6 +850,10 @@ function FixedPageEditor({
   onAddHighlight,
   onAddComment,
   onAddInk,
+  addFieldTextMode,
+  addFieldCheckboxMode,
+  onAddField,
+  onUpdateField,
   onMoveRun,
   onMoveImage,
 }: {
@@ -817,6 +881,10 @@ function FixedPageEditor({
   onAddHighlight: (rect: { x: number; y: number; w: number; h: number }) => void;
   onAddComment: (cx: number, cy: number) => void;
   onAddInk: (strokesPx: number[][][]) => void;
+  addFieldTextMode: boolean;
+  addFieldCheckboxMode: boolean;
+  onAddField: (kind: "text" | "checkbox", cx: number, cy: number) => void;
+  onUpdateField: (layerIdx: number, fieldIdx: number, value: unknown) => void;
   onMoveRun: (layerIdx: number, runIdx: number, xPt: number, yPt: number) => void;
   onMoveImage: (layerIdx: number, xPt: number, yPt: number) => void;
 }) {
@@ -921,12 +989,21 @@ function FixedPageEditor({
       {addImageMode ? <ClickPlaceOverlay onPlace={onAddImage} /> : null}
       {commentMode ? <ClickPlaceOverlay onPlace={onAddComment} /> : null}
       {inkMode ? <InkOverlay onComplete={onAddInk} /> : null}
+      {addFieldTextMode ? (
+        <ClickPlaceOverlay onPlace={(cx, cy) => onAddField("text", cx, cy)} />
+      ) : null}
+      {addFieldCheckboxMode ? (
+        <ClickPlaceOverlay onPlace={(cx, cy) => onAddField("checkbox", cx, cy)} />
+      ) : null}
+      <FormFieldsOverlay page={page} scale={scale} onUpdateField={onUpdateField} />
       {!placeMode &&
       !addTextMode &&
       !addImageMode &&
       !highlightMode &&
       !commentMode &&
-      !inkMode ? (
+      !inkMode &&
+      !addFieldTextMode &&
+      !addFieldCheckboxMode ? (
         <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
       ) : null}
       </div>
@@ -1070,6 +1147,80 @@ function InkOverlay({ onComplete }: { onComplete: (strokes: number[][][]) => voi
       ) : null}
     </div>
   );
+}
+
+/** DOM overlay of fillable form fields for a page. Each field is a
+ * native text input or checkbox positioned at its rect — typing /
+ * toggling updates the UDM. Added fields get a faint amber border so
+ * users can tell what they placed. */
+function FormFieldsOverlay({
+  page,
+  scale,
+  onUpdateField,
+}: {
+  page: Page;
+  scale: number;
+  onUpdateField: (layerIdx: number, fieldIdx: number, value: unknown) => void;
+}) {
+  const ptToPx = (pt: number) => pt * (96 / 72) * scale;
+  const elements: React.ReactElement[] = [];
+  page.layers.forEach((layer, layerIdx) => {
+    if (layer.type !== "form") return;
+    const fields = (layer as unknown as { fields: Array<Record<string, unknown>> }).fields;
+    if (!Array.isArray(fields)) return;
+    fields.forEach((field, fieldIdx) => {
+      const rect = field.rect as { x: number; y: number; w: number; h: number } | undefined;
+      if (!rect) return;
+      const isAdded = !!(field._meta as { added?: boolean } | undefined)?.added;
+      const left = ptToPx(rect.x);
+      const top = ptToPx(rect.y);
+      const width = ptToPx(rect.w);
+      const height = ptToPx(rect.h);
+      const baseStyle: CSSProperties = {
+        position: "absolute",
+        left,
+        top,
+        width,
+        height,
+        boxSizing: "border-box",
+        border: isAdded ? "1.5px solid var(--color-accent, #fcc46a)" : "1px solid #94a3b8",
+        background: "rgba(255,255,255,0.85)",
+        fontFamily: "ui-sans-serif, system-ui, sans-serif",
+        fontSize: Math.max(10, Math.min(height * 0.7, 16)),
+        padding: "0 4px",
+        outline: "none",
+      };
+      if (field.kind === "checkbox") {
+        elements.push(
+          <input
+            key={`${layerIdx}-${fieldIdx}`}
+            type="checkbox"
+            checked={!!field.value && field.value !== "Off" && field.value !== false}
+            onChange={(e) => onUpdateField(layerIdx, fieldIdx, e.currentTarget.checked)}
+            style={{ ...baseStyle, padding: 0, accentColor: "var(--color-accent, #fcc46a)" }}
+            title={String(field.name ?? "")}
+          />
+        );
+      } else {
+        elements.push(
+          <input
+            key={`${layerIdx}-${fieldIdx}`}
+            type="text"
+            defaultValue={String(field.value ?? "")}
+            onBlur={(e) => {
+              const v = e.currentTarget.value;
+              if (v !== String(field.value ?? "")) onUpdateField(layerIdx, fieldIdx, v);
+            }}
+            style={baseStyle}
+            placeholder={String(field.name ?? "")}
+            title={String(field.name ?? "")}
+          />
+        );
+      }
+    });
+  });
+  if (!elements.length) return null;
+  return <>{elements}</>;
 }
 
 /** Render annotation layers on the Konva canvas. v1 supports
@@ -1707,6 +1858,8 @@ const MODE_HINT: Record<EditorMode, string> = {
   highlight: "drag over text to highlight it",
   comment: "click where you want a sticky-note comment",
   ink: "draw freehand — mouse-up commits the stroke",
+  "add-field-text": "click where you want the new text field",
+  "add-field-checkbox": "click where you want the new checkbox",
 };
 
 function EditorHeader({
@@ -1738,6 +1891,8 @@ function EditorHeader({
     { m: "highlight", label: "▮ highlight" },
     { m: "comment", label: "💬 comment" },
     { m: "ink", label: "✒ ink" },
+    { m: "add-field-text", label: "▭ text field" },
+    { m: "add-field-checkbox", label: "☐ checkbox" },
   ];
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">
