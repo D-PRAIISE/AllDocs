@@ -60,9 +60,14 @@ def export_pdf(
     ``base_dir`` is used to resolve relative ``data_ref`` URLs in
     ``udm.resources``. It defaults to the current working directory.
     """
-    if udm.get("mode") != "fixed":
+    if udm.get("mode") == "flow":
+        # Cross-format: flow UDM (e.g. imported DOCX) -> paginated fixed UDM.
+        from .flow_to_fixed import flow_to_fixed
+
+        udm = flow_to_fixed(udm)
+    elif udm.get("mode") != "fixed":
         raise NotImplementedError(
-            f"Export only supports mode='fixed' in v0.1; got mode={udm.get('mode')!r}"
+            f"PDF export supports flow and fixed UDM; got mode={udm.get('mode')!r}"
         )
 
     base = Path(base_dir) if base_dir else Path.cwd()

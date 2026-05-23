@@ -1184,7 +1184,12 @@ function FormFieldsOverlay({
         height,
         boxSizing: "border-box",
         border: isAdded ? "1.5px solid var(--color-accent, #fcc46a)" : "1px solid #94a3b8",
-        background: "rgba(255,255,255,0.85)",
+        background: "rgba(255,255,255,0.92)",
+        // Explicit ink color: the editor inherits a light text color
+        // from the app shell which is invisible on the near-white field
+        // background — typed text would only show when selected.
+        color: "#111",
+        caretColor: "#111",
         fontFamily: "ui-sans-serif, system-ui, sans-serif",
         fontSize: Math.max(10, Math.min(height * 0.7, 16)),
         padding: "0 4px",

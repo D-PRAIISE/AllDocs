@@ -216,15 +216,13 @@ export function HomeClient() {
               >
                 {isDownloading ? "exporting…" : "↓ pdf"}
               </button>
-              {doc?.mode === "flow" && (
-                <button
-                  onClick={handleDownloadDocx}
-                  disabled={isDownloading}
-                  className="btn-ghost"
-                >
-                  ↓ docx
-                </button>
-              )}
+              <button
+                onClick={handleDownloadDocx}
+                disabled={isDownloading}
+                className="btn-ghost"
+              >
+                ↓ docx
+              </button>
             </>
           )}
         </div>

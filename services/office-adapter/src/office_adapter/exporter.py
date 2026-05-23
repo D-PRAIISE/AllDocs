@@ -15,10 +15,19 @@ from docx.text.paragraph import Paragraph as DocxParagraph
 
 
 def export_docx(udm: dict[str, Any], output_path: str | Path) -> None:
-    """Render a UDM flow-mode document to a DOCX file."""
-    if udm.get("mode") != "flow":
+    """Render a UDM document to a DOCX file.
+
+    Accepts both flow-mode (native) and fixed-mode (cross-format from
+    PDF) UDM. For fixed UDM the text runs are grouped into paragraphs
+    and headings via fixed_to_flow before rendering.
+    """
+    if udm.get("mode") == "fixed":
+        from .fixed_to_flow import fixed_to_flow
+
+        udm = fixed_to_flow(udm)
+    elif udm.get("mode") != "flow":
         raise NotImplementedError(
-            f"DOCX export only supports mode='flow' in v0.1; got mode={udm.get('mode')!r}"
+            f"DOCX export supports flow and fixed UDM; got mode={udm.get('mode')!r}"
         )
 
     doc = Document()

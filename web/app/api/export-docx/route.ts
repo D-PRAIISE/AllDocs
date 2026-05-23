@@ -17,8 +17,10 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const SUBPROCESS_TIMEOUT_MS = 45_000;
-const MAX_POST_BYTES = 10 * 1024 * 1024;
+const SUBPROCESS_TIMEOUT_MS = 60_000;
+// Match /api/export: a fixed UDM with embedded image data URLs gets
+// big — cross-format export needs to accept the same payloads.
+const MAX_POST_BYTES = 32 * 1024 * 1024;
 const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
@@ -41,10 +43,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       { status: 400 }
     );
   }
+  // Both flow and fixed modes are accepted — the office adapter
+  // auto-converts fixed UDM via fixed_to_flow for cross-format export.
   const mode = (udm as { mode?: unknown }).mode;
-  if (mode !== "flow") {
+  if (mode !== "flow" && mode !== "fixed") {
     return NextResponse.json(
-      { error: `DOCX export requires mode="flow"; got mode=${JSON.stringify(mode)}` },
+      { error: `DOCX export supports flow and fixed UDM; got mode=${JSON.stringify(mode)}` },
       { status: 400 }
     );
   }
