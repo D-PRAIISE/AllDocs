@@ -14,14 +14,22 @@ from docx.shared import RGBColor
 from docx.text.paragraph import Paragraph as DocxParagraph
 
 
-def export_docx(udm: dict[str, Any], output_path: str | Path) -> None:
+def export_docx(
+    udm: dict[str, Any],
+    output_path: str | Path,
+    base_dir: str | Path | None = None,
+) -> None:
     """Render a UDM document to a DOCX file.
 
-    Accepts both flow-mode (native) and fixed-mode (cross-format from
-    PDF) UDM. For fixed UDM the text runs are grouped into paragraphs
-    and headings via fixed_to_flow before rendering.
+    Accepts flow-mode (native) and fixed-mode (cross-format from PDF)
+    UDM. For fixed UDM with an available passthrough source PDF, hands
+    off to pdf2docx for layout-faithful conversion (tables, multi-
+    column, images preserved). Falls back to fixed_to_flow + heuristic
+    rendering when pdf2docx isn't usable.
     """
     if udm.get("mode") == "fixed":
+        if base_dir is not None and _pdf2docx_export(udm, output_path, Path(base_dir)):
+            return
         from .fixed_to_flow import fixed_to_flow
 
         udm = fixed_to_flow(udm)
@@ -39,10 +47,44 @@ def export_docx(udm: dict[str, Any], output_path: str | Path) -> None:
     doc.save(str(output_path))
 
 
-def export_docx_from_file(udm_path: str | Path, output_path: str | Path) -> None:
+def _pdf2docx_export(
+    udm: dict[str, Any], output_path: str | Path, base_dir: Path
+) -> bool:
+    """Hand off to pdf2docx when a passthrough source PDF is reachable.
+    Returns True if the export succeeded (caller should not fall back).
+
+    pdf2docx does proper layout analysis — tables, multi-column, images,
+    inline styling — which our linear heuristic doesn't reconstruct. For
+    a complex form (Hygeia HMO) the difference is 4 tables vs 0.
+    """
+    passthrough = (udm.get("metadata") or {}).get("passthrough") or {}
+    source_url = passthrough.get("source_url")
+    if not source_url:
+        return False
+    source_path = (base_dir / str(source_url).lstrip("/")).resolve()
+    if not source_path.exists():
+        return False
+    try:
+        from pdf2docx import Converter
+    except Exception:
+        return False
+    try:
+        cv = Converter(str(source_path))
+        cv.convert(str(output_path))
+        cv.close()
+        return True
+    except Exception:
+        return False
+
+
+def export_docx_from_file(
+    udm_path: str | Path,
+    output_path: str | Path,
+    base_dir: str | Path | None = None,
+) -> None:
     udm_path = Path(udm_path)
     udm = json.loads(udm_path.read_text(encoding="utf-8"))
-    export_docx(udm, output_path)
+    export_docx(udm, output_path, base_dir=base_dir)
 
 
 # ---- Blocks --------------------------------------------------------------

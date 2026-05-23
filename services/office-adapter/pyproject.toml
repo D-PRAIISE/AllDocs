@@ -7,6 +7,10 @@ license = { text = "AGPL-3.0-or-later" }
 readme = "README.md"
 dependencies = [
     "python-docx>=1.1",
+    # Layout-faithful PDF -> DOCX (tables, columns, images). Used when a
+    # passthrough source PDF is reachable; the linear fixed_to_flow
+    # heuristic is the fallback when it isn't.
+    "pdf2docx>=0.5.6",
 ]
 
 [project.scripts]

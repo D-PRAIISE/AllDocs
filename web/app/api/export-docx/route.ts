@@ -17,7 +17,8 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const SUBPROCESS_TIMEOUT_MS = 60_000;
+// pdf2docx layout analysis takes ~3s/page; allow generous headroom.
+const SUBPROCESS_TIMEOUT_MS = 180_000;
 // Match /api/export: a fixed UDM with embedded image data URLs gets
 // big — cross-format export needs to accept the same payloads.
 const MAX_POST_BYTES = 32 * 1024 * 1024;
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const webRoot = process.cwd();
   const repoRoot = resolve(webRoot, "..");
   const pythonPath = resolve(repoRoot, "services", "office-adapter", "src");
+  const publicDir = resolve(webRoot, "public");
 
   const tmp = await mkdtemp(join(tmpdir(), "alldocs-export-docx-"));
   const udmPath = join(tmp, "doc.udm.json");
@@ -63,7 +65,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   try {
     await writeFile(udmPath, JSON.stringify(udm));
-    await runOfficeExporter(udmPath, outputDocx, pythonPath);
+    // Pass base_dir = web/public so the exporter can resolve the
+    // passthrough source PDF (/uploads/<id>/source.pdf) for the
+    // pdf2docx layout-faithful PDF→DOCX path.
+    await runOfficeExporter(udmPath, outputDocx, pythonPath, publicDir);
     const bytes = await readFile(outputDocx);
     return new NextResponse(new Uint8Array(bytes), {
       status: 200,
@@ -85,13 +90,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 function runOfficeExporter(
   udmPath: string,
   outputDocx: string,
-  pythonPath: string
+  pythonPath: string,
+  baseDir: string
 ): Promise<void> {
   return new Promise((resolve_, reject) => {
     const env = { ...process.env, PYTHONPATH: pythonPath };
     const proc = spawn(
       "python",
-      ["-m", "office_adapter.cli", "--export", udmPath, "-o", outputDocx],
+      [
+        "-m",
+        "office_adapter.cli",
+        "--export",
+        udmPath,
+        "-o",
+        outputDocx,
+        "--base-dir",
+        baseDir,
+      ],
       { env, windowsHide: true }
     );
 

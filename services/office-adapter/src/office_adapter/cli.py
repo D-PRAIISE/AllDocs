@@ -41,6 +41,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Export mode: input is a UDM JSON, output is a DOCX",
     )
+    parser.add_argument(
+        "--base-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Export: base directory used to resolve relative paths in the UDM "
+            "(esp. metadata.passthrough.source_url, which enables pdf2docx "
+            "layout-faithful PDF→DOCX export)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not args.input.exists():
@@ -51,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.output:
             print("error: --export requires -o OUTPUT", file=sys.stderr)
             return 2
-        export_docx_from_file(args.input, args.output)
+        export_docx_from_file(args.input, args.output, base_dir=args.base_dir)
         print(
             f"Exported {args.output} ({args.output.stat().st_size} bytes)",
             file=sys.stderr,
