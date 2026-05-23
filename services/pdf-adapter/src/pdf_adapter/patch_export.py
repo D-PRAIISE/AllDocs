@@ -92,7 +92,8 @@ def try_patch_export(
         # Net-new content the user added in the editor.
         added_runs = _diff_added_runs(udm)
         added_images = _diff_added_images(udm)
-        has_additions = bool(added_runs or added_images)
+        added_annots = _diff_added_annotations(udm)
+        has_additions = bool(added_runs or added_images or added_annots)
 
         # OCR docs (scanned / rasterized — text sits over an image) take a
         # separate path: there are no source text spans to redact, so we
@@ -109,6 +110,7 @@ def try_patch_export(
                     page.draw_rect(e["cover_rect"], color=None, fill=e["bg_color"])
                     _insert_replacement(page, e, udm, base_dir)
             _apply_added_content(work, udm, added_runs, added_images, base_dir)
+            _apply_added_annotations(work, added_annots)
             _apply_image_swaps(work, image_swaps)
             work.save(str(output_path), garbage=4, deflate=True, clean=True)
             return True
@@ -150,6 +152,7 @@ def try_patch_export(
 
         _apply_shape_recolors(work, udm, shape_edits, base_dir)
         _apply_added_content(work, udm, added_runs, added_images, base_dir)
+        _apply_added_annotations(work, added_annots)
         _apply_image_swaps(work, image_swaps)
         work.save(str(output_path), garbage=4, deflate=True, clean=True)
         return True
@@ -690,6 +693,91 @@ def _apply_added_content(
             continue
         for edit in runs:
             _insert_replacement(work[page_idx], edit, udm, base_dir)
+
+
+def _diff_added_annotations(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
+    """Collect annotation layers the user added in the editor (the
+    annotation's ``data._meta.added`` is set). Highlight / comment / ink
+    are supported in v1."""
+    from collections import defaultdict
+
+    out: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    pages = (udm.get("content") or {}).get("pages") or []
+    for i, page in enumerate(pages):
+        for layer in page.get("layers", []):
+            if layer.get("type") != "annotation":
+                continue
+            data = layer.get("data") or {}
+            if not isinstance(data, dict):
+                continue
+            if not (data.get("_meta") or {}).get("added"):
+                continue
+            out[i].append({"kind": layer.get("kind"), "data": data})
+    return dict(out)
+
+
+def _apply_added_annotations(
+    work: pymupdf.Document,
+    annots: dict[int, list[dict[str, Any]]],
+) -> None:
+    """Create proper PDF annotations on the rebuilt/source doc."""
+    for page_idx, items in annots.items():
+        if page_idx >= len(work):
+            continue
+        page = work[page_idx]
+        for item in items:
+            kind = item.get("kind")
+            data = item.get("data") or {}
+            try:
+                if kind == "highlight":
+                    rect = data.get("rect") or {}
+                    r = pymupdf.Rect(
+                        float(rect["x"]),
+                        float(rect["y"]),
+                        float(rect["x"]) + float(rect["w"]),
+                        float(rect["y"]) + float(rect["h"]),
+                    )
+                    annot = page.add_highlight_annot(r)
+                    _set_annot_color(annot, data.get("color"), default=(1.0, 0.92, 0.23))
+                elif kind == "comment":
+                    point = pymupdf.Point(float(data["x"]), float(data["y"]))
+                    annot = page.add_text_annot(point, str(data.get("text") or ""))
+                    _set_annot_color(annot, data.get("color"), default=(1.0, 0.85, 0.0))
+                elif kind == "ink":
+                    strokes_raw = data.get("strokes") or []
+                    strokes = [
+                        [pymupdf.Point(float(p[0]), float(p[1])) for p in s if len(p) >= 2]
+                        for s in strokes_raw
+                        if isinstance(s, list)
+                    ]
+                    strokes = [s for s in strokes if len(s) >= 2]
+                    if not strokes:
+                        continue
+                    annot = page.add_ink_annot(strokes)
+                    _set_annot_color(annot, data.get("color"), default=(0.0, 0.0, 0.0))
+                    width = data.get("width")
+                    if width:
+                        try:
+                            annot.set_border(width=float(width))
+                        except Exception:
+                            pass
+                    annot.update()
+            except Exception:
+                # Skip a bad annotation rather than abort the whole export.
+                continue
+
+
+def _set_annot_color(annot: Any, color: Any, default: tuple[float, float, float]) -> None:
+    """Apply a 0-255 RGB list (or fall back to ``default`` in 0-1)."""
+    try:
+        if isinstance(color, (list, tuple)) and len(color) >= 3:
+            rgb = (float(color[0]) / 255.0, float(color[1]) / 255.0, float(color[2]) / 255.0)
+        else:
+            rgb = default
+        annot.set_colors(stroke=rgb)
+        annot.update()
+    except Exception:
+        pass
 
 
 def _collect_spans(page: pymupdf.Page) -> list[dict[str, Any]]:

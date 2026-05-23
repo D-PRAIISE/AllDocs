@@ -1,7 +1,7 @@
 "use client";
 
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Group, Image as KonvaImage, Layer, Rect as KonvaRect, Stage, Text as KonvaText } from "react-konva";
+import { Group, Image as KonvaImage, Layer, Line as KonvaLine, Rect as KonvaRect, Stage, Text as KonvaText } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import useImage from "use-image";
 
@@ -24,7 +24,15 @@ import {
 type FamilyClass = "sans" | "serif" | "mono";
 
 /** The one active editor tool. "none" = plain click-to-edit text. */
-type EditorMode = "none" | "region-image" | "recolor" | "add-text" | "add-image";
+type EditorMode =
+  | "none"
+  | "region-image"
+  | "recolor"
+  | "add-text"
+  | "add-image"
+  | "highlight"
+  | "comment"
+  | "ink";
 
 /** What a text edit commits: the new string plus its formatting. */
 interface EditCommit {
@@ -311,6 +319,9 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   const recolorMode = mode === "recolor";
   const addTextMode = mode === "add-text";
   const addImageMode = mode === "add-image";
+  const highlightMode = mode === "highlight";
+  const commentMode = mode === "comment";
+  const inkMode = mode === "ink";
   const toggleMode = (m: EditorMode) => setMode((cur) => (cur === m ? "none" : m));
   const [layout, setLayout] = useState<"list" | "grid">("list");
 
@@ -480,6 +491,70 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [doc, onChange, scale]
   );
 
+  // ---- annotation creation -----------------------------------------
+
+  const addAnnotationLayer = useCallback(
+    (pageIdx: number, kind: "highlight" | "comment" | "ink", data: Record<string, unknown>) => {
+      const next = structuredClone(doc) as Document;
+      const page = (next.content as FixedContent).pages[pageIdx];
+      if (!page) return;
+      page.layers.push({
+        type: "annotation",
+        kind,
+        data: { ...data, _meta: { added: true } },
+      } as never);
+      onChange(next);
+    },
+    [doc, onChange]
+  );
+
+  const pxRectToPt = useCallback(
+    (rect: { x: number; y: number; w: number; h: number }) => {
+      const k = (72 / 96) / scale;
+      return { x: rect.x * k, y: rect.y * k, w: rect.w * k, h: rect.h * k };
+    },
+    [scale]
+  );
+
+  const addHighlight = useCallback(
+    (pageIdx: number, rect: { x: number; y: number; w: number; h: number }) => {
+      const r = pxRectToPt(rect);
+      addAnnotationLayer(pageIdx, "highlight", {
+        rect: r,
+        color: [255, 235, 59],
+      });
+      setMode("none");
+    },
+    [addAnnotationLayer, pxRectToPt]
+  );
+
+  const addComment = useCallback(
+    (pageIdx: number, cx: number, cy: number) => {
+      // Use the browser prompt for v1 — quick + functional. A nicer
+      // inline popover can come later.
+      const text = window.prompt("Comment:");
+      setMode("none");
+      if (!text) return;
+      const k = (72 / 96) / scale;
+      addAnnotationLayer(pageIdx, "comment", { x: cx * k, y: cy * k, text });
+    },
+    [addAnnotationLayer, scale]
+  );
+
+  const addInk = useCallback(
+    (pageIdx: number, strokesPx: number[][][]) => {
+      const k = (72 / 96) / scale;
+      const strokes = strokesPx.map((s) => s.map(([x, y]) => [x * k, y * k]));
+      addAnnotationLayer(pageIdx, "ink", {
+        strokes,
+        color: [200, 0, 0],
+        width: 2.0,
+      });
+      setMode("none");
+    },
+    [addAnnotationLayer, scale]
+  );
+
   // Reposition a dragged text run / image layer (added content only).
   const moveRun = useCallback(
     (pageIdx: number, layerIdx: number, runIdx: number, xPt: number, yPt: number) => {
@@ -548,6 +623,9 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               recolorMode={recolorMode}
               addTextMode={addTextMode}
               addImageMode={addImageMode}
+              highlightMode={highlightMode}
+              commentMode={commentMode}
+              inkMode={inkMode}
               onStartEdit={setEditing}
               onCancelEdit={() => setEditing(null)}
               onCommitEdit={(state, commit) => {
@@ -559,6 +637,9 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               onRecolorShape={(layerIdx) => recolorShape(pageIdx, layerIdx)}
               onAddText={(cx, cy) => addTextRun(pageIdx, cx, cy)}
               onAddImage={(cx, cy) => addImage(pageIdx, cx, cy)}
+              onAddHighlight={(rect) => addHighlight(pageIdx, rect)}
+              onAddComment={(cx, cy) => addComment(pageIdx, cx, cy)}
+              onAddInk={(strokes) => addInk(pageIdx, strokes)}
               onMoveRun={(layerIdx, runIdx, xPt, yPt) =>
                 moveRun(pageIdx, layerIdx, runIdx, xPt, yPt)
               }
@@ -703,6 +784,12 @@ function FixedPageEditor({
   addImageMode,
   onAddText,
   onAddImage,
+  highlightMode,
+  commentMode,
+  inkMode,
+  onAddHighlight,
+  onAddComment,
+  onAddInk,
   onMoveRun,
   onMoveImage,
 }: {
@@ -724,6 +811,12 @@ function FixedPageEditor({
   addImageMode: boolean;
   onAddText: (cx: number, cy: number) => void;
   onAddImage: (cx: number, cy: number) => void;
+  highlightMode: boolean;
+  commentMode: boolean;
+  inkMode: boolean;
+  onAddHighlight: (rect: { x: number; y: number; w: number; h: number }) => void;
+  onAddComment: (cx: number, cy: number) => void;
+  onAddInk: (strokesPx: number[][][]) => void;
   onMoveRun: (layerIdx: number, runIdx: number, xPt: number, yPt: number) => void;
   onMoveImage: (layerIdx: number, xPt: number, yPt: number) => void;
 }) {
@@ -803,6 +896,9 @@ function FixedPageEditor({
                   />
                 );
               }
+              if (layer.type === "annotation") {
+                return <AnnotationNode key={layerIdx} layer={layer} scale={scale} />;
+              }
               return null;
             })}
         </Layer>
@@ -818,9 +914,19 @@ function FixedPageEditor({
         />
       ) : null}
       {placeMode ? <RegionSelectOverlay onComplete={onPlaceRegion} /> : null}
+      {highlightMode ? (
+        <RegionSelectOverlay onComplete={onAddHighlight} accentColor="#ffeb3b" />
+      ) : null}
       {addTextMode ? <ClickPlaceOverlay onPlace={onAddText} /> : null}
       {addImageMode ? <ClickPlaceOverlay onPlace={onAddImage} /> : null}
-      {!placeMode && !addTextMode && !addImageMode ? (
+      {commentMode ? <ClickPlaceOverlay onPlace={onAddComment} /> : null}
+      {inkMode ? <InkOverlay onComplete={onAddInk} /> : null}
+      {!placeMode &&
+      !addTextMode &&
+      !addImageMode &&
+      !highlightMode &&
+      !commentMode &&
+      !inkMode ? (
         <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
       ) : null}
       </div>
@@ -848,8 +954,10 @@ function ClickPlaceOverlay({ onPlace }: { onPlace: (cx: number, cy: number) => v
  * can composite a picked image into that region. */
 function RegionSelectOverlay({
   onComplete,
+  accentColor,
 }: {
   onComplete: (rect: { x: number; y: number; w: number; h: number }) => void;
+  accentColor?: string;
 }) {
   const [start, setStart] = useState<{ x: number; y: number } | null>(null);
   const [cur, setCur] = useState<{ x: number; y: number } | null>(null);
@@ -889,12 +997,163 @@ function RegionSelectOverlay({
     >
       {rect ? (
         <div
-          className="absolute border-2 border-accent bg-accent/15 pointer-events-none"
-          style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}
+          className={
+            accentColor
+              ? "absolute border-2 pointer-events-none"
+              : "absolute border-2 border-accent bg-accent/15 pointer-events-none"
+          }
+          style={{
+            left: rect.x,
+            top: rect.y,
+            width: rect.w,
+            height: rect.h,
+            ...(accentColor
+              ? { borderColor: accentColor, background: `${accentColor}40` }
+              : {}),
+          }}
         />
       ) : null}
     </div>
   );
+}
+
+/** Freehand drawing overlay — one stroke per use. mousedown starts
+ * recording, mousemove appends points, mouseup commits the stroke. */
+function InkOverlay({ onComplete }: { onComplete: (strokes: number[][][]) => void }) {
+  const [points, setPoints] = useState<number[][]>([]);
+  const drawingRef = useRef(false);
+
+  const localPoint = (e: React.MouseEvent<HTMLDivElement>): [number, number] => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+
+  const polyline = points.length >= 2 ? points.map((p) => `${p[0]},${p[1]}`).join(" ") : "";
+
+  return (
+    <div
+      className="absolute inset-0 z-30"
+      style={{ cursor: "crosshair" }}
+      onMouseDown={(e) => {
+        drawingRef.current = true;
+        setPoints([localPoint(e)]);
+      }}
+      onMouseMove={(e) => {
+        if (!drawingRef.current) return;
+        setPoints((cur) => [...cur, localPoint(e)]);
+      }}
+      onMouseUp={() => {
+        drawingRef.current = false;
+        if (points.length >= 2) onComplete([points]);
+        setPoints([]);
+      }}
+      onMouseLeave={() => {
+        if (drawingRef.current && points.length >= 2) onComplete([points]);
+        drawingRef.current = false;
+        setPoints([]);
+      }}
+    >
+      {polyline ? (
+        <svg
+          className="absolute inset-0 pointer-events-none"
+          style={{ width: "100%", height: "100%" }}
+        >
+          <polyline
+            points={polyline}
+            fill="none"
+            stroke="#c00000"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : null}
+    </div>
+  );
+}
+
+/** Render annotation layers on the Konva canvas. v1 supports
+ * highlight (yellow translucent rect), comment (small icon marker), and
+ * ink (polyline). All non-listening — annotations don't intercept text
+ * clicks. */
+function AnnotationNode({
+  layer,
+  scale,
+}: {
+  layer: { type: "annotation"; kind: string; data: unknown };
+  scale: number;
+}) {
+  const kind = layer.kind;
+  const data = (layer.data as Record<string, unknown>) || {};
+  const ptToPx = (pt: number) => pt * (96 / 72) * scale;
+
+  if (kind === "highlight") {
+    const rect = (data.rect as Record<string, number> | undefined) ?? null;
+    if (!rect) return null;
+    const color = data.color as [number, number, number] | undefined;
+    const fill =
+      color && color.length >= 3
+        ? `rgba(${color[0]},${color[1]},${color[2]},0.40)`
+        : "rgba(255,235,59,0.40)";
+    return (
+      <KonvaRect
+        x={ptToPx(rect.x)}
+        y={ptToPx(rect.y)}
+        width={ptToPx(rect.w)}
+        height={ptToPx(rect.h)}
+        fill={fill}
+        listening={false}
+      />
+    );
+  }
+
+  if (kind === "comment") {
+    const x = ptToPx(Number(data.x) || 0);
+    const y = ptToPx(Number(data.y) || 0);
+    const size = 16;
+    return (
+      <KonvaRect
+        x={x}
+        y={y}
+        width={size}
+        height={size}
+        fill="#fcc46a"
+        stroke="#a66b00"
+        strokeWidth={1}
+        listening={false}
+      />
+    );
+  }
+
+  if (kind === "ink") {
+    const strokes = (data.strokes as number[][][] | undefined) ?? [];
+    const color = (data.color as [number, number, number] | undefined) ?? [200, 0, 0];
+    const width = (data.width as number | undefined) ?? 2;
+    const stroke = `rgb(${color[0]},${color[1]},${color[2]})`;
+    return (
+      <>
+        {strokes.map((s, i) => {
+          const flat: number[] = [];
+          for (const p of s) {
+            if (p.length >= 2) flat.push(ptToPx(p[0]!), ptToPx(p[1]!));
+          }
+          if (flat.length < 4) return null;
+          return (
+            <KonvaLine
+              key={i}
+              points={flat}
+              stroke={stroke}
+              strokeWidth={width * scale}
+              lineCap="round"
+              lineJoin="round"
+              listening={false}
+            />
+          );
+        })}
+      </>
+    );
+  }
+  return null;
 }
 
 function ImageReplaceButtons({
@@ -1445,6 +1704,9 @@ const MODE_HINT: Record<EditorMode, string> = {
   recolor: "click any shape to recolor it",
   "add-text": "click where you want the new text",
   "add-image": "click where you want the new image, then pick a file",
+  highlight: "drag over text to highlight it",
+  comment: "click where you want a sticky-note comment",
+  ink: "draw freehand — mouse-up commits the stroke",
 };
 
 function EditorHeader({
@@ -1473,6 +1735,9 @@ function EditorHeader({
     { m: "add-image", label: "🖼 add image" },
     { m: "recolor", label: "◐ recolor shape" },
     { m: "region-image", label: "⊕ replace region" },
+    { m: "highlight", label: "▮ highlight" },
+    { m: "comment", label: "💬 comment" },
+    { m: "ink", label: "✒ ink" },
   ];
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">
