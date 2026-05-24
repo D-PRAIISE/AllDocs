@@ -750,6 +750,39 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [doc, onChange]
   );
 
+  // Radio click: set this field to "On" and clear every sibling that
+  // shares the same group name (radios in the same group are mutually
+  // exclusive). Searches doc-wide since radio groups can span pages.
+  const selectRadioInGroup = useCallback(
+    (pageIdx: number, layerIdx: number, fieldIdx: number) => {
+      const next = structuredClone(doc) as Document;
+      const allPages = (next.content as FixedContent).pages;
+      const layer = allPages[pageIdx]?.layers[layerIdx];
+      if (!layer || layer.type !== "form") return;
+      const fields = (layer as unknown as { fields: Array<Record<string, unknown>> }).fields;
+      const target = fields?.[fieldIdx];
+      if (!target) return;
+      const groupName = String(target.name ?? "");
+      const onValue =
+        ((target._meta as { on_value?: string } | undefined)?.on_value) ?? "On";
+      // Walk every form field across the doc; clear siblings, mark this one.
+      for (const p of allPages) {
+        for (const l of p.layers) {
+          if (l.type !== "form") continue;
+          const fs = (l as unknown as { fields?: Array<Record<string, unknown>> }).fields;
+          if (!Array.isArray(fs)) continue;
+          for (const f of fs) {
+            if (f.kind !== "radio") continue;
+            if (String(f.name ?? "") !== groupName) continue;
+            f.value = f === target ? onValue : "Off";
+          }
+        }
+      }
+      onChange(next, `radio-${groupName}`);
+    },
+    [doc, onChange]
+  );
+
   const addFormField = useCallback(
     (pageIdx: number, kind: "text" | "checkbox", cx: number, cy: number) => {
       const next = structuredClone(doc) as Document;
@@ -974,6 +1007,9 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               onAddField={(kind, cx, cy) => addFormField(pageIdx, kind, cx, cy)}
               onUpdateField={(layerIdx, fieldIdx, value) =>
                 updateFormField(pageIdx, layerIdx, fieldIdx, value)
+              }
+              onSelectRadio={(layerIdx, fieldIdx) =>
+                selectRadioInGroup(pageIdx, layerIdx, fieldIdx)
               }
               onMoveRun={(layerIdx, runIdx, xPt, yPt) =>
                 moveRun(pageIdx, layerIdx, runIdx, xPt, yPt)
@@ -1214,6 +1250,7 @@ function FixedPageEditor({
   onUpdateField,
   onMoveRun,
   onMoveImage,
+  onSelectRadio,
   selectedKeys,
   pageSelectionKeyOf,
   onSelect,
@@ -1250,6 +1287,7 @@ function FixedPageEditor({
   addFieldCheckboxMode: boolean;
   onAddField: (kind: "text" | "checkbox", cx: number, cy: number) => void;
   onUpdateField: (layerIdx: number, fieldIdx: number, value: unknown) => void;
+  onSelectRadio: (layerIdx: number, fieldIdx: number) => void;
   onMoveRun: (layerIdx: number, runIdx: number, xPt: number, yPt: number) => void;
   onMoveImage: (layerIdx: number, xPt: number, yPt: number) => void;
   selectedKeys: ReadonlySet<string>;
@@ -1429,6 +1467,7 @@ function FixedPageEditor({
         page={page}
         scale={scale}
         onUpdateField={onUpdateField}
+        onSelectRadio={onSelectRadio}
         showAutoDetected={showAutoDetected}
       />
       {!placeMode &&
@@ -1592,11 +1631,13 @@ function FormFieldsOverlay({
   page,
   scale,
   onUpdateField,
+  onSelectRadio,
   showAutoDetected,
 }: {
   page: Page;
   scale: number;
   onUpdateField: (layerIdx: number, fieldIdx: number, value: unknown) => void;
+  onSelectRadio: (layerIdx: number, fieldIdx: number) => void;
   showAutoDetected: boolean;
 }) {
   const ptToPx = (pt: number) => pt * (96 / 72) * scale;
@@ -1644,6 +1685,48 @@ function FormFieldsOverlay({
             style={{ ...baseStyle, padding: 0, accentColor: "var(--color-accent, #fcc46a)" }}
             title={String(field.name ?? "")}
           />
+        );
+      } else if (field.kind === "radio") {
+        const selected = !!field.value && field.value !== "Off" && field.value !== false;
+        // Draw the radio with native browser look but scaled to the
+        // widget rect. We can't use <input type="radio" name="..."> for
+        // grouping because clicking one inside an existing group needs
+        // to call our handler so the UDM sees the change.
+        elements.push(
+          <button
+            key={`${layerIdx}-${fieldIdx}`}
+            type="button"
+            onClick={() => onSelectRadio(layerIdx, fieldIdx)}
+            style={{
+              position: "absolute",
+              left,
+              top,
+              width,
+              height,
+              boxSizing: "border-box",
+              borderRadius: "50%",
+              border: isAdded ? "1.5px solid var(--color-accent, #fcc46a)" : "1px solid #475569",
+              background: "rgba(255,255,255,0.92)",
+              padding: 0,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            title={`${String(field.name ?? "")}${selected ? " (selected)" : ""}`}
+          >
+            {selected ? (
+              <span
+                style={{
+                  display: "block",
+                  width: "55%",
+                  height: "55%",
+                  borderRadius: "50%",
+                  background: "#111",
+                }}
+              />
+            ) : null}
+          </button>
         );
       } else {
         elements.push(

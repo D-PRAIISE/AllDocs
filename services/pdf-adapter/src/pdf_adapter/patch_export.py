@@ -725,8 +725,19 @@ def _diff_form_fields(
                 meta = field.get("_meta") or {}
                 name = field.get("name") or ""
                 value = field.get("value")
+                kind = field.get("kind") or "text"
                 if meta.get("added"):
                     ops[i].append({"action": "add", "field": field})
+                    continue
+                # Radios in the same group share field_name — disambiguate
+                # by xref so we update the specific button the user picked.
+                if kind == "radio":
+                    xref = meta.get("xref")
+                    if xref is None:
+                        continue
+                    ops[i].append(
+                        {"action": "update_radio", "xref": int(xref), "value": value}
+                    )
                     continue
                 w = live.get(name)
                 if w is None:
@@ -746,9 +757,31 @@ def _apply_form_fields(
         page = work[page_idx]
         # Update existing widgets first (matched by name).
         updates = {o["name"]: o["value"] for o in ops if o["action"] == "update"}
-        if updates:
+        # Radios: matched by xref since they share names within a group.
+        radio_updates = {
+            int(o["xref"]): o["value"] for o in ops if o["action"] == "update_radio"
+        }
+        if updates or radio_updates:
             try:
                 for w in page.widgets():
+                    if radio_updates and w.field_type_string == "RadioButton":
+                        try:
+                            xref = int(w.xref)
+                        except Exception:
+                            xref = None
+                        if xref is not None and xref in radio_updates:
+                            v = radio_updates[xref]
+                            try:
+                                # Either the captured on-value ("Yes",
+                                # "Male", …) or "Off" — both are valid
+                                # PDF radio field_value strings.
+                                w.field_value = (
+                                    "Off" if v in (None, False, "Off", "") else str(v)
+                                )
+                                w.update()
+                            except Exception:
+                                pass
+                            continue
                     if w.field_name in updates:
                         v = updates[w.field_name]
                         try:

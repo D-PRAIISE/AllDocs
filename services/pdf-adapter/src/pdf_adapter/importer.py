@@ -549,8 +549,23 @@ def _form_fields_for(page: pymupdf.Page) -> list[dict[str, Any]]:
         try:
             type_str = w.field_type_string or ""
             r = w.rect
+            kind = _WIDGET_KIND.get(type_str, "unknown")
+            meta: dict[str, Any] = {"xref": int(w.xref), "type_str": type_str}
+            # Radios in the same group share field_name; each widget has
+            # its own on-value (e.g. "Yes", "Option1", "Male") that the
+            # exporter needs to know when the user selects this button.
+            if kind == "radio":
+                try:
+                    states = w.button_states() or {}
+                    normal = states.get("normal") or []
+                    # The on-value is whichever state isn't "Off".
+                    on_values = [str(s) for s in normal if str(s) != "Off"]
+                    if on_values:
+                        meta["on_value"] = on_values[0]
+                except Exception:
+                    pass
             field: dict[str, Any] = {
-                "kind": _WIDGET_KIND.get(type_str, "unknown"),
+                "kind": kind,
                 "name": w.field_name or "",
                 "rect": {
                     "x": float(r.x0),
@@ -559,7 +574,7 @@ def _form_fields_for(page: pymupdf.Page) -> list[dict[str, Any]]:
                     "h": float(r.height),
                 },
                 "value": w.field_value,
-                "_meta": {"xref": int(w.xref), "type_str": type_str},
+                "_meta": meta,
             }
             out.append(field)
         except Exception:
