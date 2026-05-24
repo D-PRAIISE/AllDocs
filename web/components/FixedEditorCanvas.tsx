@@ -280,6 +280,26 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   // (invisible by default — the scanned image shows the text) flip to
   // visible once edited, masking the stale pixels underneath.
   const [editedKeys, setEditedKeys] = useState<ReadonlySet<string>>(new Set());
+  // Auto-detected form fields (Word-export style) are convenient on
+  // real forms but noisy on prose docs that incidentally have rect
+  // shapes. Defaults to on so the magic-just-works case keeps working;
+  // toggle in the header switches them off without re-importing.
+  const [showAutoDetected, setShowAutoDetected] = useState(true);
+  const autoDetectedCount = useMemo(() => {
+    let n = 0;
+    for (const page of fixed.pages) {
+      for (const layer of page.layers) {
+        if (layer.type !== "form") continue;
+        const fields = (layer as unknown as { fields?: Array<Record<string, unknown>> }).fields;
+        if (!Array.isArray(fields)) continue;
+        for (const f of fields) {
+          if ((f._meta as { auto_detected?: boolean } | undefined)?.auto_detected) n++;
+        }
+      }
+    }
+    return n;
+  }, [fixed]);
+
   // Set of `${pageIdx}:${layerIdx}` keys for the currently-selected
   // layers (added images only for now). Resize handles render only when
   // exactly one is selected; Delete + arrow nudge act on the whole set.
@@ -882,6 +902,9 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
           // visible: grid drops to a thumbnail zoom, list returns to 100%.
           setScale((s) => (l === "grid" && s > 0.5 ? 0.4 : l === "list" && s < 0.5 ? 1 : s));
         }}
+        autoDetectedCount={autoDetectedCount}
+        showAutoDetected={showAutoDetected}
+        onToggleAutoDetected={() => setShowAutoDetected((v) => !v)}
       />
       <PageOpsPanel doc={doc} onChange={onChange} />
       {searchOpen ? (
@@ -971,6 +994,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
                   ? `${searchMatches[searchActiveIdx].pageIdx}:${searchMatches[searchActiveIdx].layerIdx}:${searchMatches[searchActiveIdx].runIdx}`
                   : null
               }
+              showAutoDetected={showAutoDetected}
             />
           </div>
         ))}
@@ -1196,6 +1220,7 @@ function FixedPageEditor({
   onResizeImage,
   searchMatches,
   activeMatchKey,
+  showAutoDetected,
 }: {
   page: Page;
   pageIdx: number;
@@ -1246,6 +1271,7 @@ function FixedPageEditor({
     hPx: number;
   }>;
   activeMatchKey: string | null;
+  showAutoDetected: boolean;
 }) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
@@ -1399,7 +1425,12 @@ function FixedPageEditor({
       {addFieldCheckboxMode ? (
         <ClickPlaceOverlay onPlace={(cx, cy) => onAddField("checkbox", cx, cy)} />
       ) : null}
-      <FormFieldsOverlay page={page} scale={scale} onUpdateField={onUpdateField} />
+      <FormFieldsOverlay
+        page={page}
+        scale={scale}
+        onUpdateField={onUpdateField}
+        showAutoDetected={showAutoDetected}
+      />
       {!placeMode &&
       !addTextMode &&
       !addImageMode &&
@@ -1561,10 +1592,12 @@ function FormFieldsOverlay({
   page,
   scale,
   onUpdateField,
+  showAutoDetected,
 }: {
   page: Page;
   scale: number;
   onUpdateField: (layerIdx: number, fieldIdx: number, value: unknown) => void;
+  showAutoDetected: boolean;
 }) {
   const ptToPx = (pt: number) => pt * (96 / 72) * scale;
   const elements: React.ReactElement[] = [];
@@ -1575,7 +1608,9 @@ function FormFieldsOverlay({
     fields.forEach((field, fieldIdx) => {
       const rect = field.rect as { x: number; y: number; w: number; h: number } | undefined;
       if (!rect) return;
-      const isAdded = !!(field._meta as { added?: boolean } | undefined)?.added;
+      const meta = field._meta as { added?: boolean; auto_detected?: boolean } | undefined;
+      if (meta?.auto_detected && !showAutoDetected) return;
+      const isAdded = !!meta?.added;
       const left = ptToPx(rect.x);
       const top = ptToPx(rect.y);
       const width = ptToPx(rect.w);
@@ -2450,6 +2485,9 @@ function EditorHeader({
   onToggleMode,
   layout,
   onLayoutChange,
+  autoDetectedCount,
+  showAutoDetected,
+  onToggleAutoDetected,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
@@ -2457,6 +2495,9 @@ function EditorHeader({
   onToggleMode: (m: EditorMode) => void;
   layout: "list" | "grid";
   onLayoutChange: (l: "list" | "grid") => void;
+  autoDetectedCount: number;
+  showAutoDetected: boolean;
+  onToggleAutoDetected: () => void;
 }) {
   const modeBtn = (active: boolean) =>
     `font-mono text-xs px-2 py-1 border transition-colors ${
@@ -2493,7 +2534,18 @@ function EditorHeader({
           </button>
         ))}
       </div>
-      <div className="label text-muted">{MODE_HINT[mode]}</div>
+      <div className="flex items-center gap-3">
+        {autoDetectedCount > 0 ? (
+          <button
+            onClick={onToggleAutoDetected}
+            className={modeBtn(showAutoDetected)}
+            title="Auto-detect treats long rect strokes as text-field blanks and small squares as checkboxes. Disable when the document isn't actually a form."
+          >
+            {showAutoDetected ? "✓" : "○"} auto-fields ({autoDetectedCount})
+          </button>
+        ) : null}
+        <div className="label text-muted">{MODE_HINT[mode]}</div>
+      </div>
     </div>
   );
 }

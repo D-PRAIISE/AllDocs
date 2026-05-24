@@ -565,7 +565,7 @@ def _form_fields_for(page: pymupdf.Page) -> list[dict[str, Any]]:
         except Exception:
             continue
 
-    if not out:
+    if not out and not _form_detect.page_reads_as_prose(page):
         candidates = _form_detect.detect_form_candidates(page)
         if len(candidates) >= _form_detect.MIN_CANDIDATES_TO_AUTOFILL:
             for c in candidates:

@@ -29,8 +29,16 @@ _MIN_BOX_SIDE = 6.0
 _MAX_BOX_SIDE = 22.0
 _MAX_BOX_RATIO_DIFF = 4.0       # |w - h| for a "near-square" checkbox
 
-# Don't materialize for trivial counts: a single underline isn't a form.
-MIN_CANDIDATES_TO_AUTOFILL = 2
+# Don't materialize for trivial counts: a single underline isn't a form,
+# and a couple of decorative dividers in a whitepaper isn't either. Real
+# forms tend to have a noticeable cluster of blanks/checkboxes.
+MIN_CANDIDATES_TO_AUTOFILL = 4
+
+# A page with lots of long paragraphs is prose, not a form — skip
+# auto-detection there even if shape heuristics happen to match. Each
+# constant is a soft guard, not a hard rule.
+_PROSE_SPAN_MIN_CHARS = 60       # spans this long count as "paragraph-y"
+_PROSE_SPAN_DENSITY = 0.30       # >30% paragraph spans = prose, not form
 
 # Field-rect padding above a detected blank line so typing aligns to it.
 _TEXT_FIELD_HEIGHT = 16.0
@@ -105,6 +113,32 @@ def detect_form_candidates(page: pymupdf.Page) -> list[dict[str, Any]]:
     candidates = _dedup(candidates)
     _attach_labels(page, candidates)
     return candidates
+
+
+def page_reads_as_prose(page: pymupdf.Page) -> bool:
+    """True if the page is mostly long-form paragraphs (a whitepaper,
+    an article, a CV body) — auto-detect should not fire on these even
+    if some shape candidates happen to look form-ish."""
+    try:
+        blocks = page.get_text("dict").get("blocks", [])
+    except Exception:
+        return False
+    long_spans = 0
+    total_spans = 0
+    for block in blocks:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                text = (span.get("text") or "").strip()
+                if not text:
+                    continue
+                total_spans += 1
+                if len(text) >= _PROSE_SPAN_MIN_CHARS:
+                    long_spans += 1
+    if total_spans == 0:
+        return False
+    return (long_spans / total_spans) >= _PROSE_SPAN_DENSITY
 
 
 def _dedup(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
