@@ -280,6 +280,10 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   // (invisible by default — the scanned image shows the text) flip to
   // visible once edited, masking the stale pixels underneath.
   const [editedKeys, setEditedKeys] = useState<ReadonlySet<string>>(new Set());
+  // The currently selected layer (added images only for now). Showing
+  // resize handles requires a selection so the user has a clear target;
+  // dragging on the layer body still moves it as before.
+  const [selected, setSelected] = useState<{ pageIdx: number; layerIdx: number } | null>(null);
 
   const updateRun = useCallback(
     (pageIdx: number, layerIdx: number, runIdx: number, commit: EditCommit) => {
@@ -639,6 +643,49 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [doc, onChange]
   );
 
+  // Resize an image layer by setting all four (x, y, width, height) at
+  // once — corner handles change three or four values, edge handles two.
+  // Coalesces under one key for the whole drag so undo collapses the
+  // sequence into a single step.
+  const resizeImageLayer = useCallback(
+    (
+      pageIdx: number,
+      layerIdx: number,
+      xPt: number,
+      yPt: number,
+      wPt: number,
+      hPt: number
+    ) => {
+      const next = structuredClone(doc) as Document;
+      const layer = (next.content as FixedContent).pages[pageIdx]?.layers[layerIdx];
+      if (!layer || layer.type !== "image") return;
+      layer.x = { value: xPt, unit: "pt" };
+      layer.y = { value: yPt, unit: "pt" };
+      layer.width = { value: wPt, unit: "pt" };
+      layer.height = { value: hPt, unit: "pt" };
+      onChange(next, `resize-image-${pageIdx}-${layerIdx}`);
+    },
+    [doc, onChange]
+  );
+
+  // Esc clears the current selection — give the user an obvious exit.
+  useEffect(() => {
+    if (!selected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSelected(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected]);
+
+  // Any non-default mode (recolor, add-*, highlight, …) should clear the
+  // selection — the handles would just get in the way.
+  useEffect(() => {
+    if (mode !== "none") setSelected(null);
+    // mode is the only thing we react to here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   return (
     <div className="space-y-4">
       <EditorHeader
@@ -707,6 +754,13 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
                 moveRun(pageIdx, layerIdx, runIdx, xPt, yPt)
               }
               onMoveImage={(layerIdx, xPt, yPt) => moveImageLayer(pageIdx, layerIdx, xPt, yPt)}
+              selected={selected?.pageIdx === pageIdx ? selected.layerIdx : null}
+              onSelect={(layerIdx) =>
+                setSelected(layerIdx === null ? null : { pageIdx, layerIdx })
+              }
+              onResizeImage={(layerIdx, xPt, yPt, wPt, hPt) =>
+                resizeImageLayer(pageIdx, layerIdx, xPt, yPt, wPt, hPt)
+              }
             />
           </div>
         ))}
@@ -859,6 +913,9 @@ function FixedPageEditor({
   onUpdateField,
   onMoveRun,
   onMoveImage,
+  selected,
+  onSelect,
+  onResizeImage,
 }: {
   page: Page;
   pageIdx: number;
@@ -890,6 +947,15 @@ function FixedPageEditor({
   onUpdateField: (layerIdx: number, fieldIdx: number, value: unknown) => void;
   onMoveRun: (layerIdx: number, runIdx: number, xPt: number, yPt: number) => void;
   onMoveImage: (layerIdx: number, xPt: number, yPt: number) => void;
+  selected: number | null;
+  onSelect: (layerIdx: number | null) => void;
+  onResizeImage: (
+    layerIdx: number,
+    xPt: number,
+    yPt: number,
+    wPt: number,
+    hPt: number
+  ) => void;
 }) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
@@ -919,7 +985,16 @@ function FixedPageEditor({
           transformOrigin: "center center",
         }}
       >
-      <Stage width={w} height={h}>
+      <Stage
+        width={w}
+        height={h}
+        onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
+          // Click on the empty stage background → deselect. Clicks on a
+          // shape/image/handle stop propagation upstream, so this only
+          // fires when no node was hit.
+          if (e.target === e.target.getStage()) onSelect(null);
+        }}
+      >
         <Layer listening>
           {page.layers
             .map((layer, layerIdx) => ({ layer, layerIdx }))
@@ -948,6 +1023,8 @@ function FixedPageEditor({
                     resources={doc.resources}
                     scale={scale}
                     onMove={(xPt, yPt) => onMoveImage(layerIdx, xPt, yPt)}
+                    onSelect={() => onSelect(layerIdx)}
+                    isSelected={selected === layerIdx}
                   />
                 );
               }
@@ -972,6 +1049,15 @@ function FixedPageEditor({
               }
               return null;
             })}
+          {selected !== null && page.layers[selected]?.type === "image" ? (
+            <ResizeHandles
+              layer={page.layers[selected] as UdmImageLayer}
+              scale={scale}
+              onResize={(xPt, yPt, wPt, hPt) =>
+                onResizeImage(selected, xPt, yPt, wPt, hPt)
+              }
+            />
+          ) : null}
         </Layer>
       </Stage>
       {editing && editing.pageIdx === pageIdx ? (
@@ -1517,16 +1603,181 @@ function TextRunNode({
   );
 }
 
+/** Eight-handle resize box around an image layer.
+ *
+ * Corner handles change x/y and width/height together (the opposite
+ * corner stays fixed). Edge handles change one dimension. Shift held
+ * on a corner drag locks the aspect ratio.
+ *
+ * Coordinates: PDF points are the source of truth (UDM stores layer
+ * positions in pt). We work in canvas pixels for hit-testing and
+ * convert back to pt when committing through onResize.
+ */
+function ResizeHandles({
+  layer,
+  scale,
+  onResize,
+}: {
+  layer: UdmImageLayer;
+  scale: number;
+  onResize: (xPt: number, yPt: number, wPt: number, hPt: number) => void;
+}) {
+  const x = lengthToPx(layer.x) * scale;
+  const y = lengthToPx(layer.y) * scale;
+  const w = lengthToPx(layer.width) * scale;
+  const h = lengthToPx(layer.height) * scale;
+  const pxToPt = (px: number) => (px / scale) * (72 / 96);
+
+  const SIZE = 10;
+  const HALF = SIZE / 2;
+  // Minimum size in canvas pixels — prevents the box collapsing to a
+  // point where the handles become un-grabbable.
+  const MIN_PX = 8;
+
+  type Anchor = "nw" | "n" | "ne" | "e" | "se" | "s" | "sw" | "w";
+
+  const anchors: { key: Anchor; x: number; y: number; cursor: string }[] = [
+    { key: "nw", x: x, y: y, cursor: "nwse-resize" },
+    { key: "n", x: x + w / 2, y: y, cursor: "ns-resize" },
+    { key: "ne", x: x + w, y: y, cursor: "nesw-resize" },
+    { key: "e", x: x + w, y: y + h / 2, cursor: "ew-resize" },
+    { key: "se", x: x + w, y: y + h, cursor: "nwse-resize" },
+    { key: "s", x: x + w / 2, y: y + h, cursor: "ns-resize" },
+    { key: "sw", x: x, y: y + h, cursor: "nesw-resize" },
+    { key: "w", x: x, y: y + h / 2, cursor: "ew-resize" },
+  ];
+
+  const applyDrag = (
+    anchor: Anchor,
+    dragX: number,
+    dragY: number,
+    shift: boolean
+  ): { nx: number; ny: number; nw: number; nh: number } => {
+    // dragX/dragY = handle's new top-left in stage px. Convert to its
+    // logical centre (handles are SIZE×SIZE, drawn from top-left = x-HALF).
+    const cx = dragX + HALF;
+    const cy = dragY + HALF;
+
+    let nx = x;
+    let ny = y;
+    let nw = w;
+    let nh = h;
+    const right = x + w;
+    const bottom = y + h;
+
+    switch (anchor) {
+      case "nw":
+        nx = Math.min(cx, right - MIN_PX);
+        ny = Math.min(cy, bottom - MIN_PX);
+        nw = right - nx;
+        nh = bottom - ny;
+        break;
+      case "n":
+        ny = Math.min(cy, bottom - MIN_PX);
+        nh = bottom - ny;
+        break;
+      case "ne":
+        nw = Math.max(cx - x, MIN_PX);
+        ny = Math.min(cy, bottom - MIN_PX);
+        nh = bottom - ny;
+        break;
+      case "e":
+        nw = Math.max(cx - x, MIN_PX);
+        break;
+      case "se":
+        nw = Math.max(cx - x, MIN_PX);
+        nh = Math.max(cy - y, MIN_PX);
+        break;
+      case "s":
+        nh = Math.max(cy - y, MIN_PX);
+        break;
+      case "sw":
+        nx = Math.min(cx, right - MIN_PX);
+        nw = right - nx;
+        nh = Math.max(cy - y, MIN_PX);
+        break;
+      case "w":
+        nx = Math.min(cx, right - MIN_PX);
+        nw = right - nx;
+        break;
+    }
+
+    // Shift on a corner = aspect-lock. Pick the larger relative delta
+    // and apply it on both axes so the corner being dragged keeps
+    // tracking the cursor as closely as possible.
+    if (shift && (anchor === "nw" || anchor === "ne" || anchor === "se" || anchor === "sw")) {
+      const aspect = w / h;
+      if (nw / nh > aspect) {
+        nh = nw / aspect;
+      } else {
+        nw = nh * aspect;
+      }
+      // Re-anchor: top/left edges only move when their handle is being dragged.
+      if (anchor === "nw" || anchor === "sw") nx = right - nw;
+      if (anchor === "nw" || anchor === "ne") ny = bottom - nh;
+    }
+
+    return { nx, ny, nw, nh };
+  };
+
+  return (
+    <Group>
+      <KonvaRect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        stroke="#5b9bd5"
+        strokeWidth={1}
+        dash={[4, 4]}
+        listening={false}
+      />
+      {anchors.map((a) => (
+        <KonvaRect
+          key={a.key}
+          x={a.x - HALF}
+          y={a.y - HALF}
+          width={SIZE}
+          height={SIZE}
+          fill="#ffffff"
+          stroke="#5b9bd5"
+          strokeWidth={1}
+          draggable
+          onMouseEnter={(e: KonvaEventObject<MouseEvent>) => setCursor(e, a.cursor)}
+          onMouseLeave={(e: KonvaEventObject<MouseEvent>) => setCursor(e, "default")}
+          onDragMove={(e: KonvaEventObject<DragEvent>) => {
+            const shift = (e.evt as MouseEvent).shiftKey;
+            const { nx, ny, nw, nh } = applyDrag(a.key, e.target.x(), e.target.y(), shift);
+            onResize(pxToPt(nx), pxToPt(ny), pxToPt(nw), pxToPt(nh));
+          }}
+          onDragEnd={(e: KonvaEventObject<DragEvent>) => {
+            // Snap the handle back to its computed position — the layer
+            // moved as we dragged, so the handle's stage position is now
+            // wherever React last placed it via the parent re-render.
+            const shift = (e.evt as MouseEvent).shiftKey;
+            const { nx, ny, nw, nh } = applyDrag(a.key, e.target.x(), e.target.y(), shift);
+            onResize(pxToPt(nx), pxToPt(ny), pxToPt(nw), pxToPt(nh));
+          }}
+        />
+      ))}
+    </Group>
+  );
+}
+
 function ImageNode({
   layer,
   resources,
   scale,
   onMove,
+  onSelect,
+  isSelected,
 }: {
   layer: UdmImageLayer;
   resources: Document["resources"];
   scale: number;
   onMove: (xPt: number, yPt: number) => void;
+  onSelect?: () => void;
+  isSelected?: boolean;
 }) {
   const img = resources.images.find((i) => i.id === layer.image_id);
   const ref = img?.data_ref ?? "";
@@ -1581,6 +1832,9 @@ function ImageNode({
       listening={added}
       draggable={added}
       onDragEnd={added ? onDragEnd : undefined}
+      onMouseDown={added && onSelect ? () => onSelect() : undefined}
+      stroke={isSelected ? "#5b9bd5" : undefined}
+      strokeWidth={isSelected ? 1 : 0}
       onMouseEnter={
         added ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "move") : undefined
       }
