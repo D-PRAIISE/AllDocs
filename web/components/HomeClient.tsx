@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { Block, Document, FlowContent } from "@/lib/udm";
+import { useHistory } from "@/lib/use-doc-history";
 import { FixedEditor } from "./FixedEditor";
 import { FlowEditor } from "./FlowEditor";
 import { DocumentSummary, FontFaceStyles, UdmViewer } from "./UdmViewer";
@@ -19,11 +20,21 @@ interface UploadResult {
 
 const DEFAULT_SRC = "/synthetic.udm.json";
 
+// Placeholder while no doc is loaded — the history hook needs a value
+// to initialise with even before fetch resolves.
+const EMPTY_DOC: Document = {
+  schema_version: 0,
+  mode: "fixed",
+  metadata: { title: "" },
+  resources: { fonts: [], images: [], styles: [], colors: [] },
+  content: { kind: "fixed", pages: [] },
+} as unknown as Document;
+
 export function HomeClient() {
   const [src, setSrc] = useState<string>(DEFAULT_SRC);
   const [meta, setMeta] = useState<UploadResult | null>(null);
   const [doc, setDoc] = useState<Document | null>(null);
-  const [draftDoc, setDraftDoc] = useState<Document | null>(null);
+  const draft = useHistory<Document>(EMPTY_DOC);
   const [isEditing, setIsEditing] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -33,7 +44,6 @@ export function HomeClient() {
     let cancelled = false;
     setError(null);
     setDoc(null);
-    setDraftDoc(null);
     setIsDirty(false);
     fetch(src)
       .then((r) => {
@@ -43,7 +53,7 @@ export function HomeClient() {
       .then((d) => {
         if (cancelled) return;
         setDoc(d);
-        setDraftDoc(d);
+        draft.reset(d);
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -51,6 +61,9 @@ export function HomeClient() {
     return () => {
       cancelled = true;
     };
+    // draft is intentionally omitted — reset is stable enough and we
+    // only want this to fire on src change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src]);
 
   const handleUploaded = useCallback((result: UploadResult) => {
@@ -61,36 +74,71 @@ export function HomeClient() {
 
   const handleEditedBlocks = useCallback(
     (blocks: Block[]) => {
-      if (!draftDoc) return;
+      const current = draft.state;
+      if (!current) return;
       const next: Document = {
-        ...draftDoc,
-        content: { ...(draftDoc.content as FlowContent), blocks } as FlowContent,
+        ...current,
+        content: { ...(current.content as FlowContent), blocks } as FlowContent,
       };
-      setDraftDoc(next);
+      // TipTap owns its own undo for in-editor ops; we coalesce all flow
+      // edits under one key so our top-level history doesn't compete.
+      draft.set(next, "flow-edit");
       setIsDirty(true);
     },
-    [draftDoc]
+    [draft]
   );
 
   const handleEditedDoc = useCallback(
-    (next: Document) => {
-      setDraftDoc(next);
+    (next: Document, coalesceKey?: string) => {
+      draft.set(next, coalesceKey);
       setIsDirty(true);
     },
-    []
+    [draft]
   );
 
+  const handleEnterEdit = useCallback(() => {
+    if (doc) draft.reset(doc);
+    setIsEditing(true);
+    setIsDirty(false);
+  }, [doc, draft]);
+
   const handleSave = useCallback(() => {
-    setDoc(draftDoc);
+    setDoc(draft.state);
     setIsDirty(false);
     setIsEditing(false);
-  }, [draftDoc]);
+  }, [draft.state]);
 
   const handleDiscard = useCallback(() => {
-    setDraftDoc(doc);
+    if (doc) draft.reset(doc);
     setIsDirty(false);
     setIsEditing(false);
-  }, [doc]);
+  }, [doc, draft]);
+
+  // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo. Only active
+  // in fixed-mode editing — flow mode delegates to TipTap's own history,
+  // and we don't want our top-level shortcut to fight ProseMirror's.
+  useEffect(() => {
+    if (!isEditing) return;
+    if (doc?.mode !== "fixed") return;
+    // The FixedEditor's contentEditable is exactly where the user is
+    // most likely to want undo, so we deliberately don't bail on
+    // input/textarea/contentEditable targets — we want our top-level
+    // history to win even mid-typing.
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      if (key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        draft.undo();
+      } else if ((key === "z" && e.shiftKey) || key === "y") {
+        e.preventDefault();
+        draft.redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [isEditing, doc, draft]);
 
   const downloadExport = useCallback(
     async (endpoint: "/api/export" | "/api/export-docx", ext: "pdf" | "docx") => {
@@ -143,6 +191,9 @@ export function HomeClient() {
 
   const canEdit = doc?.mode === "flow" || doc?.mode === "fixed";
   const showDownload = doc !== null && (doc.mode === "fixed" || doc.mode === "flow");
+  // Only surface our top-level undo/redo for fixed mode — flow has
+  // TipTap's own undo on its toolbar.
+  const showHistoryControls = isEditing && doc?.mode === "fixed";
 
   return (
     <div className="space-y-6">
@@ -182,7 +233,7 @@ export function HomeClient() {
 
         <div className="flex flex-wrap items-center gap-2 px-4 py-3">
           {canEdit && !isEditing && (
-            <button onClick={() => setIsEditing(true)} className="btn-ghost">
+            <button onClick={handleEnterEdit} className="btn-ghost">
               edit
             </button>
           )}
@@ -199,6 +250,27 @@ export function HomeClient() {
               <button onClick={handleDiscard} className="btn-ghost">
                 {isDirty ? "discard" : "done"}
               </button>
+              {showHistoryControls && (
+                <>
+                  <span className="w-px h-5 bg-border mx-1" />
+                  <button
+                    onClick={draft.undo}
+                    disabled={!draft.canUndo}
+                    title="Undo (Ctrl+Z)"
+                    className="btn-ghost"
+                  >
+                    ↶ undo
+                  </button>
+                  <button
+                    onClick={draft.redo}
+                    disabled={!draft.canRedo}
+                    title="Redo (Ctrl+Shift+Z)"
+                    className="btn-ghost"
+                  >
+                    ↷ redo
+                  </button>
+                </>
+              )}
               {isDirty && (
                 <span className="font-mono text-[0.65rem] uppercase tracking-wider text-warn">
                   unsaved changes
@@ -240,7 +312,7 @@ export function HomeClient() {
         </div>
       )}
 
-      {doc !== null && draftDoc !== null && (
+      {doc !== null && (
         isEditing && doc.mode === "flow" ? (
           <FlowEditor
             initialBlocks={(doc.content as FlowContent).blocks}
@@ -248,9 +320,9 @@ export function HomeClient() {
           />
         ) : isEditing && doc.mode === "fixed" ? (
           <div className="space-y-4">
-            <FontFaceStyles resources={draftDoc.resources} />
-            <DocumentSummary doc={draftDoc} />
-            <FixedEditor doc={draftDoc} onChange={handleEditedDoc} />
+            <FontFaceStyles resources={draft.state.resources} />
+            <DocumentSummary doc={draft.state} />
+            <FixedEditor doc={draft.state} onChange={handleEditedDoc} />
           </div>
         ) : (
           <UdmViewer doc={doc} />

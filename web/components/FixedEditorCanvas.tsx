@@ -94,7 +94,10 @@ function ensureFont(doc: Document, family: FamilyClass, weight: number): string 
 
 interface FixedEditorCanvasProps {
   doc: Document;
-  onChange: (next: Document) => void;
+  /** Push a new draft. Pass `coalesceKey` to collapse rapid same-key
+   *  updates (typing in one run, dragging one layer) into a single
+   *  undo entry. Omit for discrete actions (add, delete, recolor). */
+  onChange: (next: Document, coalesceKey?: string) => void;
 }
 
 // Match FixedPageView's baseline → top-edge approximation so the canvas
@@ -292,7 +295,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       // font_id -> FontResource -> a bundled metric-compatible font.
       run.font_id = ensureFont(next, commit.family, commit.bold ? 700 : 400);
       setEditedKeys((prev) => new Set(prev).add(runKey(pageIdx, layerIdx, runIdx)));
-      onChange(next);
+      onChange(next, `edit-text-${pageIdx}-${layerIdx}-${runIdx}`);
     },
     [doc, onChange]
   );
@@ -570,7 +573,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       const field = fields?.[fieldIdx];
       if (!field) return;
       field.value = value;
-      onChange(next);
+      onChange(next, `field-${pageIdx}-${layerIdx}-${fieldIdx}`);
     },
     [doc, onChange]
   );
@@ -619,7 +622,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       if (!run) return;
       run.x = { value: xPt, unit: "pt" };
       run.y = { value: yPt, unit: "pt" };
-      onChange(next);
+      onChange(next, `drag-run-${pageIdx}-${layerIdx}-${runIdx}`);
     },
     [doc, onChange]
   );
@@ -631,7 +634,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       if (!layer || layer.type !== "image") return;
       layer.x = { value: xPt, unit: "pt" };
       layer.y = { value: yPt, unit: "pt" };
-      onChange(next);
+      onChange(next, `drag-image-${pageIdx}-${layerIdx}`);
     },
     [doc, onChange]
   );

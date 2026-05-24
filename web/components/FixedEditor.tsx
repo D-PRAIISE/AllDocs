@@ -21,7 +21,7 @@ const FixedEditorCanvas = dynamic(() => import("./FixedEditorCanvas"), {
 
 interface FixedEditorProps {
   doc: Document;
-  onChange: (next: Document) => void;
+  onChange: (next: Document, coalesceKey?: string) => void;
 }
 
 export function FixedEditor({ doc, onChange }: FixedEditorProps) {
