@@ -280,10 +280,158 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   // (invisible by default — the scanned image shows the text) flip to
   // visible once edited, masking the stale pixels underneath.
   const [editedKeys, setEditedKeys] = useState<ReadonlySet<string>>(new Set());
-  // The currently selected layer (added images only for now). Showing
-  // resize handles requires a selection so the user has a clear target;
-  // dragging on the layer body still moves it as before.
-  const [selected, setSelected] = useState<{ pageIdx: number; layerIdx: number } | null>(null);
+  // Set of `${pageIdx}:${layerIdx}` keys for the currently-selected
+  // layers (added images only for now). Resize handles render only when
+  // exactly one is selected; Delete + arrow nudge act on the whole set.
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const selectionKey = (p: number, l: number) => `${p}:${l}`;
+  const toggleSelected = useCallback((p: number, l: number, additive: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const k = selectionKey(p, l);
+      if (!additive) {
+        return next.has(k) && next.size === 1 ? new Set() : new Set([k]);
+      }
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }, []);
+
+  // ---- search across all pages -------------------------------------
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
+
+  interface SearchMatch {
+    pageIdx: number;
+    layerIdx: number;
+    runIdx: number;
+    xPx: number;
+    yPx: number;
+    wPx: number;
+    hPx: number;
+  }
+  const searchMatches = useMemo<SearchMatch[]>(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const out: SearchMatch[] = [];
+    fixed.pages.forEach((page, pageIdx) => {
+      page.layers.forEach((layer, layerIdx) => {
+        if (layer.type !== "text") return;
+        layer.runs.forEach((run, runIdx) => {
+          if (!run.text.toLowerCase().includes(q)) return;
+          const fontSizePx = lengthToPx(run.font_size) * scale;
+          const xPx = lengthToPx(run.x) * scale;
+          const yPx = lengthToPx(run.y) * scale;
+          // Estimate width — OCR runs carry it; everything else falls
+          // back to a glyph-width approximation. Search highlighting is
+          // a guide, not a measurement, so this is fine.
+          const widthPt = run._meta?.ocr_width ?? run.text.length * lengthToPt(run.font_size) * 0.5;
+          const wPx = widthPt * (96 / 72) * scale;
+          const top = yPx - fontSizePx * BASELINE_TO_TOP;
+          out.push({
+            pageIdx,
+            layerIdx,
+            runIdx,
+            xPx,
+            yPx: top,
+            wPx,
+            hPx: fontSizePx,
+          });
+        });
+      });
+    });
+    return out;
+  }, [fixed, searchQuery, scale]);
+
+  // Clamp the active index whenever the matches change.
+  useEffect(() => {
+    if (searchMatches.length === 0) {
+      setSearchActiveIdx(0);
+    } else if (searchActiveIdx >= searchMatches.length) {
+      setSearchActiveIdx(0);
+    }
+  }, [searchMatches, searchActiveIdx]);
+
+  // Refs to the per-page wrappers so the active match can scroll into view.
+  const pageRefs = useRef<Array<HTMLDivElement | null>>([]);
+  useEffect(() => {
+    if (!searchOpen || searchMatches.length === 0) return;
+    const m = searchMatches[searchActiveIdx];
+    if (!m) return;
+    const el = pageRefs.current[m.pageIdx];
+    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [searchActiveIdx, searchMatches, searchOpen]);
+
+  // ---- delete + nudge for selected layers --------------------------
+  const deleteSelected = useCallback(() => {
+    if (selected.size === 0) return;
+    const next = structuredClone(doc) as Document;
+    const content = next.content as FixedContent;
+    // Group by page, splice in reverse so indices stay valid.
+    const byPage = new Map<number, number[]>();
+    for (const key of selected) {
+      const [p, l] = key.split(":").map(Number);
+      if (p === undefined || l === undefined) continue;
+      const arr = byPage.get(p) ?? [];
+      arr.push(l);
+      byPage.set(p, arr);
+    }
+    for (const [pageIdx, layerIdxs] of byPage) {
+      const page = content.pages[pageIdx];
+      if (!page) continue;
+      layerIdxs.sort((a, b) => b - a);
+      for (const l of layerIdxs) {
+        // Only delete if it's an added/draggable layer — refuse to nuke
+        // original-document content. Mirror the same gate as resize.
+        const layer = page.layers[l];
+        if (!layer) continue;
+        if (layer.type === "image") {
+          const ref = next.resources.images.find((i) => i.id === layer.image_id);
+          const isAdded =
+            ref?.data_ref?.startsWith("data:") &&
+            !(ref._meta as { xref?: number } | undefined)?.xref;
+          if (!isAdded) continue;
+        } else if (layer.type === "text") {
+          if (!layer.runs[0]?._meta?.added) continue;
+        } else if (layer.type === "annotation") {
+          // OK to delete
+        } else {
+          continue;
+        }
+        page.layers.splice(l, 1);
+      }
+    }
+    setSelected(new Set());
+    onChange(next);
+  }, [doc, onChange, selected]);
+
+  const nudgeSelected = useCallback(
+    (dxPt: number, dyPt: number) => {
+      if (selected.size === 0) return;
+      const next = structuredClone(doc) as Document;
+      const content = next.content as FixedContent;
+      for (const key of selected) {
+        const [p, l] = key.split(":").map(Number);
+        if (p === undefined || l === undefined) continue;
+        const layer = content.pages[p]?.layers[l];
+        if (!layer) continue;
+        if (layer.type === "image") {
+          layer.x = { value: lengthToPt(layer.x) + dxPt, unit: "pt" };
+          layer.y = { value: lengthToPt(layer.y) + dyPt, unit: "pt" };
+        } else if (layer.type === "text") {
+          for (const run of layer.runs) {
+            run.x = { value: lengthToPt(run.x) + dxPt, unit: "pt" };
+            run.y = { value: lengthToPt(run.y) + dyPt, unit: "pt" };
+          }
+        }
+      }
+      // Coalesce all arrow-key nudges in this burst into one history entry.
+      onChange(next, `nudge-${[...selected].sort().join(",")}`);
+    },
+    [doc, onChange, selected]
+  );
 
   const updateRun = useCallback(
     (pageIdx: number, layerIdx: number, runIdx: number, commit: EditCommit) => {
@@ -668,20 +816,54 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [doc, onChange]
   );
 
-  // Esc clears the current selection — give the user an obvious exit.
+  // Keyboard surface: Ctrl+F opens search; Esc closes search / clears
+  // selection; Delete + arrows act on the selected layers.
   useEffect(() => {
-    if (!selected) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setSelected(null);
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key;
+      const target = e.target as HTMLElement | null;
+      const inField =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target?.isContentEditable === true;
+
+      // Ctrl+F always wins — we want our search, not the browser's.
+      if (mod && key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+        return;
+      }
+      if (key === "Escape") {
+        if (searchOpen) {
+          setSearchOpen(false);
+          return;
+        }
+        if (selected.size > 0) setSelected(new Set());
+        return;
+      }
+      // Delete + arrow nudge only when nothing's being typed.
+      if (inField) return;
+      if (selected.size === 0) return;
+      if (key === "Delete" || key === "Backspace") {
+        e.preventDefault();
+        deleteSelected();
+      } else if (key === "ArrowLeft" || key === "ArrowRight" || key === "ArrowUp" || key === "ArrowDown") {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const dx = key === "ArrowLeft" ? -step : key === "ArrowRight" ? step : 0;
+        const dy = key === "ArrowUp" ? -step : key === "ArrowDown" ? step : 0;
+        nudgeSelected(dx, dy);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selected]);
+  }, [searchOpen, selected, deleteSelected, nudgeSelected]);
 
   // Any non-default mode (recolor, add-*, highlight, …) should clear the
   // selection — the handles would just get in the way.
   useEffect(() => {
-    if (mode !== "none") setSelected(null);
+    if (mode !== "none") setSelected(new Set());
     // mode is the only thing we react to here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
@@ -702,6 +884,23 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         }}
       />
       <PageOpsPanel doc={doc} onChange={onChange} />
+      {searchOpen ? (
+        <SearchBar
+          query={searchQuery}
+          onQueryChange={setSearchQuery}
+          totalMatches={searchMatches.length}
+          activeIdx={searchActiveIdx}
+          onPrev={() =>
+            setSearchActiveIdx((i) =>
+              searchMatches.length === 0 ? 0 : (i - 1 + searchMatches.length) % searchMatches.length
+            )
+          }
+          onNext={() =>
+            setSearchActiveIdx((i) => (searchMatches.length === 0 ? 0 : (i + 1) % searchMatches.length))
+          }
+          onClose={() => setSearchOpen(false)}
+        />
+      ) : null}
       <div
         className={
           (layout === "grid"
@@ -712,7 +911,10 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         style={{ maxHeight: "75vh" }}
       >
         {fixed.pages.map((page, pageIdx) => (
-          <div key={page.number}>
+          <div
+            key={page.number}
+            ref={(el) => { pageRefs.current[pageIdx] = el; }}
+          >
             <div className="label mb-2">
               page {page.number} · {Math.round(lengthToPx(page.width))}×{Math.round(lengthToPx(page.height))}px
             </div>
@@ -754,12 +956,20 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
                 moveRun(pageIdx, layerIdx, runIdx, xPt, yPt)
               }
               onMoveImage={(layerIdx, xPt, yPt) => moveImageLayer(pageIdx, layerIdx, xPt, yPt)}
-              selected={selected?.pageIdx === pageIdx ? selected.layerIdx : null}
-              onSelect={(layerIdx) =>
-                setSelected(layerIdx === null ? null : { pageIdx, layerIdx })
-              }
+              selectedKeys={selected}
+              pageSelectionKeyOf={(layerIdx) => selectionKey(pageIdx, layerIdx)}
+              onSelect={(layerIdx, additive) => {
+                if (layerIdx === null) setSelected(new Set());
+                else toggleSelected(pageIdx, layerIdx, additive);
+              }}
               onResizeImage={(layerIdx, xPt, yPt, wPt, hPt) =>
                 resizeImageLayer(pageIdx, layerIdx, xPt, yPt, wPt, hPt)
+              }
+              searchMatches={searchMatches.filter((m) => m.pageIdx === pageIdx)}
+              activeMatchKey={
+                searchMatches[searchActiveIdx]
+                  ? `${searchMatches[searchActiveIdx].pageIdx}:${searchMatches[searchActiveIdx].layerIdx}:${searchMatches[searchActiveIdx].runIdx}`
+                  : null
               }
             />
           </div>
@@ -774,6 +984,73 @@ interface EditingState {
   layerIdx: number;
   runIdx: number;
   initialText: string;
+}
+
+/** Compact in-editor search bar. Renders above the page container; the
+ * actual match highlighting lives on each Stage. */
+function SearchBar({
+  query,
+  onQueryChange,
+  totalMatches,
+  activeIdx,
+  onPrev,
+  onNext,
+  onClose,
+}: {
+  query: string;
+  onQueryChange: (q: string) => void;
+  totalMatches: number;
+  activeIdx: number;
+  onPrev: () => void;
+  onNext: () => void;
+  onClose: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+  const btn =
+    "font-mono text-xs px-2 py-1 border border-border text-muted hover:text-fg hover:border-fg disabled:opacity-25 disabled:hover:text-muted disabled:hover:border-border";
+  return (
+    <div className="border border-border bg-surface px-3 py-2 flex items-center gap-2">
+      <span className="label">find</span>
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            if (e.shiftKey) onPrev();
+            else onNext();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          }
+        }}
+        placeholder="search text…"
+        className="font-mono text-xs px-2 py-1 bg-bg border border-border text-fg flex-1 min-w-0"
+        style={{ color: "#111", caretColor: "#111" }}
+      />
+      <span className="font-mono text-[0.65rem] uppercase tracking-wider text-subtle whitespace-nowrap">
+        {totalMatches === 0
+          ? query.trim() === ""
+            ? "—"
+            : "0 matches"
+          : `${activeIdx + 1} / ${totalMatches}`}
+      </span>
+      <button className={btn} onClick={onPrev} disabled={totalMatches === 0} title="Previous (Shift+Enter)">
+        ↑
+      </button>
+      <button className={btn} onClick={onNext} disabled={totalMatches === 0} title="Next (Enter)">
+        ↓
+      </button>
+      <button className={btn} onClick={onClose} title="Close (Esc)">
+        ✕
+      </button>
+    </div>
+  );
 }
 
 /** Page operations strip — reorder / rotate / delete / insert blank.
@@ -913,9 +1190,12 @@ function FixedPageEditor({
   onUpdateField,
   onMoveRun,
   onMoveImage,
-  selected,
+  selectedKeys,
+  pageSelectionKeyOf,
   onSelect,
   onResizeImage,
+  searchMatches,
+  activeMatchKey,
 }: {
   page: Page;
   pageIdx: number;
@@ -947,8 +1227,9 @@ function FixedPageEditor({
   onUpdateField: (layerIdx: number, fieldIdx: number, value: unknown) => void;
   onMoveRun: (layerIdx: number, runIdx: number, xPt: number, yPt: number) => void;
   onMoveImage: (layerIdx: number, xPt: number, yPt: number) => void;
-  selected: number | null;
-  onSelect: (layerIdx: number | null) => void;
+  selectedKeys: ReadonlySet<string>;
+  pageSelectionKeyOf: (layerIdx: number) => string;
+  onSelect: (layerIdx: number | null, additive: boolean) => void;
   onResizeImage: (
     layerIdx: number,
     xPt: number,
@@ -956,6 +1237,15 @@ function FixedPageEditor({
     wPt: number,
     hPt: number
   ) => void;
+  searchMatches: ReadonlyArray<{
+    layerIdx: number;
+    runIdx: number;
+    xPx: number;
+    yPx: number;
+    wPx: number;
+    hPx: number;
+  }>;
+  activeMatchKey: string | null;
 }) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
@@ -992,7 +1282,7 @@ function FixedPageEditor({
           // Click on the empty stage background → deselect. Clicks on a
           // shape/image/handle stop propagation upstream, so this only
           // fires when no node was hit.
-          if (e.target === e.target.getStage()) onSelect(null);
+          if (e.target === e.target.getStage()) onSelect(null, false);
         }}
       >
         <Layer listening>
@@ -1023,8 +1313,8 @@ function FixedPageEditor({
                     resources={doc.resources}
                     scale={scale}
                     onMove={(xPt, yPt) => onMoveImage(layerIdx, xPt, yPt)}
-                    onSelect={() => onSelect(layerIdx)}
-                    isSelected={selected === layerIdx}
+                    onSelect={(additive) => onSelect(layerIdx, additive)}
+                    isSelected={selectedKeys.has(pageSelectionKeyOf(layerIdx))}
                   />
                 );
               }
@@ -1049,15 +1339,40 @@ function FixedPageEditor({
               }
               return null;
             })}
-          {selected !== null && page.layers[selected]?.type === "image" ? (
-            <ResizeHandles
-              layer={page.layers[selected] as UdmImageLayer}
-              scale={scale}
-              onResize={(xPt, yPt, wPt, hPt) =>
-                onResizeImage(selected, xPt, yPt, wPt, hPt)
-              }
-            />
-          ) : null}
+          {/* Resize handles only show for a single selection on this page. */}
+          {(() => {
+            if (selectedKeys.size !== 1) return null;
+            const onlyKey = [...selectedKeys][0];
+            const [p, l] = onlyKey.split(":").map(Number);
+            if (p !== pageIdx) return null;
+            const layer = page.layers[l];
+            if (!layer || layer.type !== "image") return null;
+            return (
+              <ResizeHandles
+                layer={layer}
+                scale={scale}
+                onResize={(xPt, yPt, wPt, hPt) =>
+                  onResizeImage(l, xPt, yPt, wPt, hPt)
+                }
+              />
+            );
+          })()}
+          {searchMatches.map((m) => {
+            const key = `${pageIdx}:${m.layerIdx}:${m.runIdx}`;
+            const active = key === activeMatchKey;
+            return (
+              <KonvaRect
+                key={key}
+                x={m.xPx}
+                y={m.yPx}
+                width={m.wPx}
+                height={m.hPx}
+                fill={active ? "#fb923c" : "#fde047"}
+                opacity={active ? 0.55 : 0.4}
+                listening={false}
+              />
+            );
+          })}
         </Layer>
       </Stage>
       {editing && editing.pageIdx === pageIdx ? (
@@ -1776,7 +2091,7 @@ function ImageNode({
   resources: Document["resources"];
   scale: number;
   onMove: (xPt: number, yPt: number) => void;
-  onSelect?: () => void;
+  onSelect?: (additive: boolean) => void;
   isSelected?: boolean;
 }) {
   const img = resources.images.find((i) => i.id === layer.image_id);
@@ -1832,7 +2147,11 @@ function ImageNode({
       listening={added}
       draggable={added}
       onDragEnd={added ? onDragEnd : undefined}
-      onMouseDown={added && onSelect ? () => onSelect() : undefined}
+      onMouseDown={
+        added && onSelect
+          ? (e: KonvaEventObject<MouseEvent>) => onSelect((e.evt as MouseEvent).shiftKey)
+          : undefined
+      }
       stroke={isSelected ? "#5b9bd5" : undefined}
       strokeWidth={isSelected ? 1 : 0}
       onMouseEnter={
