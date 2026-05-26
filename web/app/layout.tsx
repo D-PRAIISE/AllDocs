@@ -21,15 +21,15 @@ export const metadata: Metadata = {
     "Free, no-signup universal document editor and converter. Drop a PDF or DOCX, view it, edit it, export it. Open source under AGPL-3.0.",
 };
 
-// Inline script: read the stored / preferred theme and stamp data-theme
-// onto <html> BEFORE React hydrates. Without this the page would flash
-// dark and then switch to light (or vice-versa) on first paint.
+// Inline script: read the stored theme and stamp data-theme onto <html>
+// BEFORE React hydrates. Dark is the unconditional default — AllDocs
+// is dark-first by design; light is opt-in. We do NOT consult
+// prefers-color-scheme; a user whose system is light still gets dark
+// here until they pick light explicitly.
 const themeBootstrap = `
 (function(){try{
   var v = localStorage.getItem('alldocs-theme');
-  if (v !== 'light' && v !== 'dark') {
-    v = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-  }
+  if (v !== 'light' && v !== 'dark') v = 'dark';
   document.documentElement.setAttribute('data-theme', v);
 }catch(e){}})();
 `;

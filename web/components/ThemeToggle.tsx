@@ -16,14 +16,14 @@ export function ThemeToggle() {
 
   useEffect(() => {
     setMounted(true);
+    // Dark is the unconditional default — AllDocs is dark-first.
+    // We deliberately don't consult prefers-color-scheme: even if the
+    // user's OS is set to light, the editor stays dark until they
+    // explicitly opt in here. Matches the bootstrap script in layout.
     let initial: Theme = "dark";
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored === "light" || stored === "dark") {
-        initial = stored;
-      } else if (window.matchMedia("(prefers-color-scheme: light)").matches) {
-        initial = "light";
-      }
+      if (stored === "light" || stored === "dark") initial = stored;
     } catch {
       // Private mode, embedded, etc. — fall through to dark.
     }
