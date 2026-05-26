@@ -605,7 +605,15 @@ def _form_fields_for(page: pymupdf.Page) -> list[dict[str, Any]]:
 
 def _shape_layers_from_drawings(page: pymupdf.Page) -> list[dict[str, Any]]:
     """Convert page.get_drawings() output into UDM ShapeLayers.
-    Currently captures rectangles only; curves and lines are skipped."""
+
+    Rectangles (``re``) keep their dedicated kind=rect geometry so the
+    editor's shape-resize handles can target them directly.
+
+    Every other path (line ``l``, cubic ``c``, partial-cubic ``v``/``y``,
+    polygons, mixed) is captured as kind=path with an SVG-style ``d``
+    string. The exporter walks the d-string and emits via
+    page.draw_line / page.draw_bezier / etc. Lesson #12.
+    """
     out: list[dict[str, Any]] = []
     try:
         drawings = page.get_drawings()
@@ -617,10 +625,12 @@ def _shape_layers_from_drawings(page: pymupdf.Page) -> list[dict[str, Any]]:
         stroke = d.get("color")
         if fill is None and stroke is None:
             continue
-        for item in d.get("items", []):
-            if not item or item[0] != "re":
-                continue
-            rect = item[1]
+        items = d.get("items") or []
+
+        # Fast path: a single rect item with no other geometry. Keep as
+        # kind=rect so resize handles + recolor still target it cleanly.
+        if len(items) == 1 and items[0] and items[0][0] == "re":
+            rect = items[0][1]
             try:
                 w = float(rect.width)
                 h = float(rect.height)
@@ -638,25 +648,99 @@ def _shape_layers_from_drawings(page: pymupdf.Page) -> list[dict[str, Any]]:
                     "h": _length(h, "pt"),
                 },
             }
-            if fill is not None:
-                layer["fill"] = {
-                    "kind": "solid",
-                    "color": {"literal": _color_tuple_to_value(fill)},
-                }
-            stroke_width = float(d.get("width") or 0)
-            if stroke is not None and stroke_width > 0:
-                layer["stroke"] = {
-                    "paint": {
-                        "kind": "solid",
-                        "color": {"literal": _color_tuple_to_value(stroke)},
-                    },
-                    "width": _length(stroke_width, "pt"),
-                }
-            opacity = d.get("fill_opacity")
-            if opacity is not None and 0 <= float(opacity) < 1:
-                layer["opacity"] = float(opacity)
+            _attach_shape_paint(layer, d, fill, stroke)
             out.append(layer)
+            continue
+
+        # Mixed / curved / line paths: emit an SVG d-string. We track the
+        # current point so the relative-move semantics of "l/c/v/y" land
+        # in absolute coords (PyMuPDF's items return absolute endpoints).
+        d_parts: list[str] = []
+        last: tuple[float, float] | None = None
+        for item in items:
+            if not item:
+                continue
+            op = item[0]
+            try:
+                if op == "re":
+                    r = item[1]
+                    x0, y0, w, h = float(r.x0), float(r.y0), float(r.width), float(r.height)
+                    d_parts.append(f"M{x0:.3f},{y0:.3f} h{w:.3f} v{h:.3f} h{-w:.3f} Z")
+                    last = (x0, y0)
+                elif op == "l":
+                    p1, p2 = item[1], item[2]
+                    if last is None or last != (float(p1.x), float(p1.y)):
+                        d_parts.append(f"M{float(p1.x):.3f},{float(p1.y):.3f}")
+                    d_parts.append(f"L{float(p2.x):.3f},{float(p2.y):.3f}")
+                    last = (float(p2.x), float(p2.y))
+                elif op == "c":
+                    # cubic: p1 (current), p2 (cp1), p3 (cp2), p4 (end)
+                    p1, p2, p3, p4 = item[1], item[2], item[3], item[4]
+                    if last is None or last != (float(p1.x), float(p1.y)):
+                        d_parts.append(f"M{float(p1.x):.3f},{float(p1.y):.3f}")
+                    d_parts.append(
+                        f"C{float(p2.x):.3f},{float(p2.y):.3f} "
+                        f"{float(p3.x):.3f},{float(p3.y):.3f} "
+                        f"{float(p4.x):.3f},{float(p4.y):.3f}"
+                    )
+                    last = (float(p4.x), float(p4.y))
+                elif op in ("v", "y"):
+                    # PDF partial-cubics: collapse to a regular cubic by
+                    # duplicating one control point (PyMuPDF returns the
+                    # absolute endpoints, so this is geometry-preserving).
+                    p1, p2, p3 = item[1], item[2], item[3]
+                    if last is None or last != (float(p1.x), float(p1.y)):
+                        d_parts.append(f"M{float(p1.x):.3f},{float(p1.y):.3f}")
+                    d_parts.append(
+                        f"C{float(p2.x):.3f},{float(p2.y):.3f} "
+                        f"{float(p2.x):.3f},{float(p2.y):.3f} "
+                        f"{float(p3.x):.3f},{float(p3.y):.3f}"
+                    )
+                    last = (float(p3.x), float(p3.y))
+            except (AttributeError, IndexError):
+                continue
+
+        if not d_parts:
+            continue
+        # Close if the drawing was closed (filled paths always are).
+        if fill is not None and not d_parts[-1].endswith("Z"):
+            d_parts.append("Z")
+
+        layer = {
+            "type": "shape",
+            "geometry": {
+                "kind": "path",
+                "d": " ".join(d_parts),
+            },
+        }
+        _attach_shape_paint(layer, d, fill, stroke)
+        out.append(layer)
     return out
+
+
+def _attach_shape_paint(
+    layer: dict[str, Any],
+    drawing: dict[str, Any],
+    fill: Any,
+    stroke: Any,
+) -> None:
+    if fill is not None:
+        layer["fill"] = {
+            "kind": "solid",
+            "color": {"literal": _color_tuple_to_value(fill)},
+        }
+    stroke_width = float(drawing.get("width") or 0)
+    if stroke is not None and stroke_width > 0:
+        layer["stroke"] = {
+            "paint": {
+                "kind": "solid",
+                "color": {"literal": _color_tuple_to_value(stroke)},
+            },
+            "width": _length(stroke_width, "pt"),
+        }
+    opacity = drawing.get("fill_opacity")
+    if opacity is not None and 0 <= float(opacity) < 1:
+        layer["opacity"] = float(opacity)
 
 
 def _color_tuple_to_value(c: Any) -> dict[str, Any]:

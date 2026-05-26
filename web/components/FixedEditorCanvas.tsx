@@ -37,7 +37,8 @@ type EditorMode =
   | "comment"
   | "ink"
   | "add-field-text"
-  | "add-field-checkbox";
+  | "add-field-checkbox"
+  | "add-field-radio";
 
 /** What a text edit commits: the new string plus its formatting. */
 interface EditCommit {
@@ -516,7 +517,28 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   const inkMode = mode === "ink";
   const addFieldTextMode = mode === "add-field-text";
   const addFieldCheckboxMode = mode === "add-field-checkbox";
-  const toggleMode = (m: EditorMode) => setMode((cur) => (cur === m ? "none" : m));
+  const addFieldRadioMode = mode === "add-field-radio";
+  // Active radio group name — the next placed radio joins this group.
+  // Lazily prompted the first time the user enters add-field-radio mode
+  // without one set; "Esc out + retoggle" lets them switch groups.
+  const [activeRadioGroup, setActiveRadioGroup] = useState<string | null>(null);
+  const toggleMode = (m: EditorMode) => {
+    setMode((cur) => (cur === m ? "none" : m));
+    // Entering add-field-radio without an active group → prompt for one;
+    // leaving radio mode resets so the next session starts a new group.
+    if (m === "add-field-radio") {
+      if (!activeRadioGroup && mode !== "add-field-radio") {
+        const name =
+          typeof window !== "undefined"
+            ? window.prompt("Radio group name", "options")?.trim() || ""
+            : "";
+        setActiveRadioGroup(name || `radio_user_${Date.now()}`);
+      }
+    } else if (mode === "add-field-radio") {
+      // Leaving radio mode — reset so re-entering prompts again.
+      setActiveRadioGroup(null);
+    }
+  };
   const [layout, setLayout] = useState<"list" | "grid">("list");
 
   // Place a net-new text run where the user clicked and open the editor.
@@ -799,7 +821,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   );
 
   const addFormField = useCallback(
-    (pageIdx: number, kind: "text" | "checkbox", cx: number, cy: number) => {
+    (pageIdx: number, kind: "text" | "checkbox" | "radio", cx: number, cy: number) => {
       const next = structuredClone(doc) as Document;
       const page = (next.content as FixedContent).pages[pageIdx];
       if (!page) return;
@@ -807,9 +829,32 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       const xPt = cx * k;
       const yPt = cy * k;
       const sizePt =
-        kind === "checkbox"
+        kind === "checkbox" || kind === "radio"
           ? { w: 14, h: 14 }
           : { w: 200, h: 22 };
+      // For radios: every placement joins the active group; counter
+      // suffix gives each button a distinct on-value within the group.
+      let radioName = "";
+      let radioOnValue = "";
+      if (kind === "radio") {
+        const groupName = activeRadioGroup || `radio_user_${Date.now()}`;
+        if (!activeRadioGroup) setActiveRadioGroup(groupName);
+        // Count siblings already in this group across the doc to mint
+        // a stable on-value ("opt_1", "opt_2", …).
+        let sib = 0;
+        for (const p of (next.content as FixedContent).pages) {
+          for (const l of p.layers) {
+            if (l.type !== "form") continue;
+            const fs = (l as unknown as { fields?: Array<Record<string, unknown>> }).fields;
+            if (!Array.isArray(fs)) continue;
+            for (const f of fs) {
+              if (f.kind === "radio" && String(f.name ?? "") === groupName) sib++;
+            }
+          }
+        }
+        radioName = groupName;
+        radioOnValue = `opt_${sib + 1}`;
+      }
       // Find or create a form layer on this page.
       let formLayer = page.layers.find((l) => l.type === "form") as
         | { type: "form"; fields: Array<Record<string, unknown>> }
@@ -821,10 +866,13 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       const idx = formLayer.fields.length;
       formLayer.fields.push({
         kind,
-        name: `field_user_${Date.now()}_${idx}`,
+        name: kind === "radio" ? radioName : `field_user_${Date.now()}_${idx}`,
         rect: { x: xPt, y: yPt, w: sizePt.w, h: sizePt.h },
-        value: kind === "checkbox" ? false : "",
-        _meta: { added: true },
+        value: kind === "checkbox" ? false : kind === "radio" ? "Off" : "",
+        _meta:
+          kind === "radio"
+            ? { added: true, on_value: radioOnValue }
+            : { added: true },
       });
       onChange(next);
       setMode("none");
@@ -1062,6 +1110,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               inkMode={inkMode}
               addFieldTextMode={addFieldTextMode}
               addFieldCheckboxMode={addFieldCheckboxMode}
+              addFieldRadioMode={addFieldRadioMode}
               onStartEdit={setEditing}
               onCancelEdit={() => setEditing(null)}
               onCommitEdit={(state, commit) => {
@@ -1336,6 +1385,7 @@ function FixedPageEditor({
   onAddInk,
   addFieldTextMode,
   addFieldCheckboxMode,
+  addFieldRadioMode,
   onAddField,
   onUpdateField,
   onMoveRun,
@@ -1379,7 +1429,8 @@ function FixedPageEditor({
   onAddInk: (strokesPx: number[][][]) => void;
   addFieldTextMode: boolean;
   addFieldCheckboxMode: boolean;
-  onAddField: (kind: "text" | "checkbox", cx: number, cy: number) => void;
+  addFieldRadioMode: boolean;
+  onAddField: (kind: "text" | "checkbox" | "radio", cx: number, cy: number) => void;
   onUpdateField: (layerIdx: number, fieldIdx: number, value: unknown) => void;
   onSelectRadio: (layerIdx: number, fieldIdx: number) => void;
   onMoveRun: (layerIdx: number, runIdx: number, xPt: number, yPt: number) => void;
@@ -1601,6 +1652,9 @@ function FixedPageEditor({
       {addFieldCheckboxMode ? (
         <ClickPlaceOverlay onPlace={(cx, cy) => onAddField("checkbox", cx, cy)} />
       ) : null}
+      {addFieldRadioMode ? (
+        <ClickPlaceOverlay onPlace={(cx, cy) => onAddField("radio", cx, cy)} />
+      ) : null}
       <FormFieldsOverlay
         page={page}
         scale={scale}
@@ -1617,7 +1671,8 @@ function FixedPageEditor({
       !commentMode &&
       !inkMode &&
       !addFieldTextMode &&
-      !addFieldCheckboxMode ? (
+      !addFieldCheckboxMode &&
+      !addFieldRadioMode ? (
         <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
       ) : null}
       </div>
@@ -2718,6 +2773,7 @@ const MODE_HINT: Record<EditorMode, string> = {
   ink: "draw freehand — mouse-up commits the stroke",
   "add-field-text": "click where you want the new text field",
   "add-field-checkbox": "click where you want the new checkbox",
+  "add-field-radio": "click to place a radio in the current group · pick the group from the tools row",
 };
 
 function EditorHeader({
@@ -2759,6 +2815,7 @@ function EditorHeader({
     { m: "ink", label: "✒ ink" },
     { m: "add-field-text", label: "▭ text field" },
     { m: "add-field-checkbox", label: "☐ checkbox" },
+    { m: "add-field-radio", label: "◉ radio" },
   ];
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">

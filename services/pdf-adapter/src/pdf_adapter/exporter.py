@@ -335,17 +335,15 @@ def _render_text_layer(
 
 
 def _render_shape_layer(page: pymupdf.Page, layer: dict[str, Any]) -> None:
-    """v0.1 shape rendering: solid-fill rectangles only.
-    Curves, paths, gradients, and patterns land in v0.2."""
+    """Render a shape layer.
+
+    kind=rect    → page.draw_rect (fastest path; preserves resize semantics)
+    kind=path    → walk the SVG-style ``d`` string and emit a single shape
+                   via PyMuPDF's Shape API (page.new_shape).
+    Gradients / patterns land in v0.2.
+    """
     geom = layer.get("geometry") or {}
-    if geom.get("kind") != "rect":
-        return
-    rect = pymupdf.Rect(
-        _length_to_pt(geom["x"]),
-        _length_to_pt(geom["y"]),
-        _length_to_pt(geom["x"]) + _length_to_pt(geom["w"]),
-        _length_to_pt(geom["y"]) + _length_to_pt(geom["h"]),
-    )
+    kind = geom.get("kind")
 
     fill_color = None
     fill = layer.get("fill")
@@ -366,13 +364,131 @@ def _render_shape_layer(page: pymupdf.Page, layer: dict[str, Any]) -> None:
     if fill_color is None and stroke_color is None:
         return
 
-    page.draw_rect(
-        rect,
+    if kind == "rect":
+        rect = pymupdf.Rect(
+            _length_to_pt(geom["x"]),
+            _length_to_pt(geom["y"]),
+            _length_to_pt(geom["x"]) + _length_to_pt(geom["w"]),
+            _length_to_pt(geom["y"]) + _length_to_pt(geom["h"]),
+        )
+        page.draw_rect(
+            rect,
+            color=stroke_color,
+            fill=fill_color,
+            width=stroke_width,
+            fill_opacity=float(layer.get("opacity", 1)),
+        )
+        return
+
+    if kind == "path":
+        d = str(geom.get("d") or "")
+        if not d:
+            return
+        _draw_svg_path(
+            page,
+            d,
+            fill_color=fill_color,
+            stroke_color=stroke_color,
+            stroke_width=stroke_width,
+            opacity=float(layer.get("opacity", 1)),
+        )
+
+
+def _draw_svg_path(
+    page: pymupdf.Page,
+    d: str,
+    fill_color: tuple[float, float, float] | None,
+    stroke_color: tuple[float, float, float] | None,
+    stroke_width: float,
+    opacity: float,
+) -> None:
+    """Walk a tiny subset of SVG path syntax (M/L/H/V/C/Z; uppercase
+    absolute + lowercase relative) and replay it via PyMuPDF's Shape
+    API. The d-strings we emit on import are a strict subset of this,
+    so we only need to recognise what we produce."""
+    import re
+
+    shape = page.new_shape()
+    cur = (0.0, 0.0)
+    start = (0.0, 0.0)
+    # Tokenise: each command letter + the numbers after it.
+    cmd_re = re.compile(r"([MmLlHhVvCcZz])([^MmLlHhVvCcZz]*)")
+    num_re = re.compile(r"-?\d+(?:\.\d+)?")
+    for match in cmd_re.finditer(d):
+        cmd = match.group(1)
+        args = [float(n) for n in num_re.findall(match.group(2) or "")]
+        rel = cmd.islower()
+        try:
+            if cmd in ("M", "m"):
+                # First pair = move; subsequent pairs = implicit lineTo.
+                i = 0
+                first = True
+                while i + 1 < len(args):
+                    x, y = args[i], args[i + 1]
+                    if rel:
+                        x, y = cur[0] + x, cur[1] + y
+                    if first:
+                        cur = (x, y)
+                        start = cur
+                        first = False
+                    else:
+                        shape.draw_line(pymupdf.Point(*cur), pymupdf.Point(x, y))
+                        cur = (x, y)
+                    i += 2
+            elif cmd in ("L", "l"):
+                i = 0
+                while i + 1 < len(args):
+                    x, y = args[i], args[i + 1]
+                    if rel:
+                        x, y = cur[0] + x, cur[1] + y
+                    shape.draw_line(pymupdf.Point(*cur), pymupdf.Point(x, y))
+                    cur = (x, y)
+                    i += 2
+            elif cmd in ("H", "h"):
+                for v in args:
+                    x = cur[0] + v if rel else v
+                    shape.draw_line(pymupdf.Point(*cur), pymupdf.Point(x, cur[1]))
+                    cur = (x, cur[1])
+            elif cmd in ("V", "v"):
+                for v in args:
+                    y = cur[1] + v if rel else v
+                    shape.draw_line(pymupdf.Point(*cur), pymupdf.Point(cur[0], y))
+                    cur = (cur[0], y)
+            elif cmd in ("C", "c"):
+                i = 0
+                while i + 5 < len(args):
+                    cp1 = (args[i], args[i + 1])
+                    cp2 = (args[i + 2], args[i + 3])
+                    end = (args[i + 4], args[i + 5])
+                    if rel:
+                        cp1 = (cur[0] + cp1[0], cur[1] + cp1[1])
+                        cp2 = (cur[0] + cp2[0], cur[1] + cp2[1])
+                        end = (cur[0] + end[0], cur[1] + end[1])
+                    shape.draw_bezier(
+                        pymupdf.Point(*cur),
+                        pymupdf.Point(*cp1),
+                        pymupdf.Point(*cp2),
+                        pymupdf.Point(*end),
+                    )
+                    cur = end
+                    i += 6
+            elif cmd in ("Z", "z"):
+                if cur != start:
+                    shape.draw_line(pymupdf.Point(*cur), pymupdf.Point(*start))
+                    cur = start
+        except Exception:
+            # One malformed segment shouldn't kill the whole shape.
+            continue
+
+    shape.finish(
         color=stroke_color,
         fill=fill_color,
         width=stroke_width,
-        fill_opacity=float(layer.get("opacity", 1)),
+        closePath=False,
+        fill_opacity=opacity,
+        stroke_opacity=opacity,
     )
+    shape.commit()
 
 
 def _render_image_layer(

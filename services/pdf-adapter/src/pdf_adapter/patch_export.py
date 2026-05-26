@@ -330,10 +330,15 @@ def _run_rect(run: dict[str, Any]) -> pymupdf.Rect | None:
 
 
 def _captured_rects(page: pymupdf.Page) -> list[tuple[pymupdf.Rect, Any]]:
-    """Re-extract page rect drawings in the *exact* order and with the
+    """Re-extract page drawings in the *exact* order and with the
     *exact* filter the importer's _shape_layers_from_drawings uses, so
-    the i-th captured rect lines up with the i-th UDM shape layer."""
-    out: list[tuple[pymupdf.Rect, Any]] = []
+    the i-th captured entry lines up with the i-th UDM shape layer.
+
+    Entries are ``(rect | None, fill)``. None signals a path-kind shape
+    (lines / curves only, no single re item) — the recolor matcher
+    skips those since their geometry isn't a simple rectangle.
+    """
+    out: list[tuple[pymupdf.Rect | None, Any]] = []
     try:
         drawings = page.get_drawings()
     except Exception:
@@ -343,16 +348,21 @@ def _captured_rects(page: pymupdf.Page) -> list[tuple[pymupdf.Rect, Any]]:
         stroke = d.get("color")
         if fill is None and stroke is None:
             continue
-        for item in d.get("items", []):
-            if not item or item[0] != "re":
-                continue
+        items = d.get("items") or []
+        # Mirror the importer: single-re drawing -> kind=rect; anything
+        # else with content -> kind=path.
+        if len(items) == 1 and items[0] and items[0][0] == "re":
             try:
-                r = pymupdf.Rect(item[1])
+                r = pymupdf.Rect(items[0][1])
             except Exception:
                 continue
             if r.width <= 0 or r.height <= 0:
                 continue
             out.append((r, fill))
+        elif items:
+            # Path-kind placeholder so positional alignment with the
+            # UDM shape list survives.
+            out.append((None, fill))
     return out
 
 
@@ -398,7 +408,11 @@ def _diff_shapes(
             if r is not None
         ]
 
-        for (li, layer), (_src_rect, src_fill) in zip(udm_shapes, captured):
+        for (li, layer), (src_rect, src_fill) in zip(udm_shapes, captured):
+            # Path-kind UDM shapes / path-kind source drawings are
+            # skipped: recolor is only well-defined for rect geometry.
+            if src_rect is None:
+                continue
             udm_rect = _geom_rect(layer.get("geometry") or {})
             if udm_rect is None:
                 continue
@@ -581,6 +595,16 @@ def _diff_runs(
                     continue  # No change to this run
 
                 bbox = src_span["bbox"]
+                # NOTE on lesson #8 (character-level redaction): PyMuPDF's
+                # apply_redactions removes a text-show op whole when the
+                # redact rect overlaps any of its glyphs — shrinking the
+                # rect to the changed-glyph window doesn't actually save
+                # the surround. The only robust fix is post-redact
+                # re-insertion of the prefix/suffix using the same font
+                # at the same baseline. That's a sizeable lift; for now
+                # the existing "redact full span + insert full new_text"
+                # approach is correct because new_text already includes
+                # the unchanged prefix/suffix. Lesson #8 is still open.
                 edits_by_page[page_idx].append(
                     {
                         "rect": pymupdf.Rect(*bbox),
@@ -815,6 +839,16 @@ def _apply_form_fields(
                 if kind == "checkbox":
                     widget.field_type = pymupdf.PDF_WIDGET_TYPE_CHECKBOX
                     widget.field_value = "Yes" if field.get("value") else "Off"
+                elif kind == "radio":
+                    # Radios in the same group share field_name; each
+                    # button's on-value is stored in _meta.on_value.
+                    on_value = (field.get("_meta") or {}).get("on_value") or "On"
+                    widget.field_type = pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON
+                    widget.button_caption = on_value
+                    v = field.get("value")
+                    widget.field_value = (
+                        "Off" if v in (None, False, "Off", "") else str(v)
+                    )
                 else:
                     widget.field_type = pymupdf.PDF_WIDGET_TYPE_TEXT
                     widget.field_value = str(field.get("value") or "")
@@ -993,7 +1027,7 @@ def _pick_font_for_text(
       3. None — caller uses a PDF base-14 stock font.
     """
     if font_resource is None:
-        return resolve_fallback("", 400, "normal")
+        return resolve_fallback("", 400, "normal", text=text)
 
     # Tier 1: extracted subset
     data_ref = font_resource.get("data_ref")
@@ -1002,11 +1036,13 @@ def _pick_font_for_text(
         if candidate.exists() and _font_covers(candidate, text):
             return candidate
 
-    # Tier 2: bundled fallback
+    # Tier 2: bundled fallback (with CJK detour when text has CJK chars
+    # and a system CJK font is available).
     return resolve_fallback(
         font_resource.get("family", ""),
         int(font_resource.get("weight", 400)),
         font_resource.get("style", "normal"),
+        text=text,
     )
 
 
