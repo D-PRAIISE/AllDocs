@@ -97,7 +97,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       }`}
     >
       {isUploading ? (
-        <div className="space-y-2">
+        <div className="space-y-2" role="status" aria-live="polite">
           <div className="font-mono text-xs uppercase tracking-wider text-accent">
             importing…
           </div>

@@ -1,6 +1,12 @@
 @import "tailwindcss";
 
-/* ----- Design tokens (dark-first brutalist palette) ----- */
+/* ----- Design tokens (dark-first brutalist palette) -----
+ *
+ * Tailwind v4 @theme tokens compile to CSS variables that the
+ * generated utilities (bg-bg, text-fg, …) read at runtime, so we can
+ * override them on [data-theme="light"] to flip the whole UI without
+ * touching component code.
+ */
 @theme {
   --color-bg: #0a0a0a;
   --color-surface: #141414;
@@ -23,6 +29,27 @@
     var(--app-font-sans, "Inter"), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono:
     var(--app-font-mono, "JetBrains Mono"), ui-monospace, "Cascadia Code", "Menlo", monospace;
+}
+
+/* Light theme — opt-in via <html data-theme="light">. Picks colours that
+ * keep the accent + success/error semantic, just on a paper-white base. */
+[data-theme="light"] {
+  --color-bg: #fafafa;
+  --color-surface: #ffffff;
+  --color-elevated: #f4f4f4;
+  --color-input: #ffffff;
+  --color-border: #e2e2e2;
+  --color-border-strong: #cccccc;
+  --color-fg: #0a0a0a;
+  --color-muted: #555555;
+  --color-subtle: #909090;
+  --color-accent: #c67700;
+  --color-accent-hover: #a86400;
+  --color-accent-fg: #ffffff;
+  --color-success: #008e6b;
+  --color-error: #c00000;
+  --color-warn: #b85c00;
+  --color-code: #0b6b3a;
 }
 
 /* ----- Base ----- */
@@ -49,6 +76,32 @@ input,
 select,
 textarea {
   border-radius: 0;
+}
+
+/* Visible focus indicator for keyboard navigation. :focus-visible only
+ * fires for keyboard / programmatic focus, so mouse clicks don't get
+ * the ring (matches modern OS conventions). */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Touch devices: bump interactive controls to a 44px target. Brutalist
+ * density on desktop, accessible reach on phones/tablets. */
+@media (pointer: coarse) {
+  button,
+  [role="button"],
+  input[type="checkbox"],
+  input[type="radio"],
+  select {
+    min-height: 44px;
+  }
+  input[type="text"],
+  input[type="search"],
+  textarea {
+    min-height: 44px;
+    padding-block: 0.5rem;
+  }
 }
 
 /* ----- Brutalist primitives ----- */

@@ -1178,13 +1178,25 @@ function SearchBar({
             : "0 matches"
           : `${activeIdx + 1} / ${totalMatches}`}
       </span>
-      <button className={btn} onClick={onPrev} disabled={totalMatches === 0} title="Previous (Shift+Enter)">
+      <button
+        className={btn}
+        onClick={onPrev}
+        disabled={totalMatches === 0}
+        title="Previous (Shift+Enter)"
+        aria-label="Previous match"
+      >
         ↑
       </button>
-      <button className={btn} onClick={onNext} disabled={totalMatches === 0} title="Next (Enter)">
+      <button
+        className={btn}
+        onClick={onNext}
+        disabled={totalMatches === 0}
+        title="Next (Enter)"
+        aria-label="Next match"
+      >
         ↓
       </button>
-      <button className={btn} onClick={onClose} title="Close (Esc)">
+      <button className={btn} onClick={onClose} title="Close (Esc)" aria-label="Close search">
         ✕
       </button>
     </div>

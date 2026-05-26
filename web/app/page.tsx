@@ -1,4 +1,5 @@
 import { HomeClient } from "@/components/HomeClient";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function HomePage() {
   return (
@@ -24,6 +25,7 @@ function SiteHeader() {
             <span className="font-mono text-xs text-subtle">v0.1.0</span>
           </div>
           <nav className="flex items-center gap-4 font-mono text-xs uppercase tracking-wider">
+            <ThemeToggle />
             <a
               href="https://github.com/D-PRAIISE/AllDocs"
               target="_blank"

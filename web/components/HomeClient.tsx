@@ -257,6 +257,7 @@ export function HomeClient() {
                     onClick={draft.undo}
                     disabled={!draft.canUndo}
                     title="Undo (Ctrl+Z)"
+                    aria-label="Undo last change"
                     className="btn-ghost"
                   >
                     ↶ undo
@@ -265,6 +266,7 @@ export function HomeClient() {
                     onClick={draft.redo}
                     disabled={!draft.canRedo}
                     title="Redo (Ctrl+Shift+Z)"
+                    aria-label="Redo last undo"
                     className="btn-ghost"
                   >
                     ↷ redo

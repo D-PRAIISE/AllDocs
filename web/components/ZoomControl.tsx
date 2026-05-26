@@ -22,7 +22,12 @@ export function ZoomControl({
   return (
     <div className="flex items-center gap-1.5">
       <span className="label mr-1">zoom</span>
-      <button className={nudgeBtn} onClick={() => onScaleChange(clamp(scale - 0.1))} title="zoom out">
+      <button
+        className={nudgeBtn}
+        onClick={() => onScaleChange(clamp(scale - 0.1))}
+        title="zoom out"
+        aria-label="Zoom out"
+      >
         −
       </button>
       <input
@@ -34,14 +39,21 @@ export function ZoomControl({
         onChange={(e) => onScaleChange(clamp(Number(e.target.value)))}
         className="w-28 accent-accent"
         title="zoom"
+        aria-label="Zoom level"
       />
-      <button className={nudgeBtn} onClick={() => onScaleChange(clamp(scale + 0.1))} title="zoom in">
+      <button
+        className={nudgeBtn}
+        onClick={() => onScaleChange(clamp(scale + 0.1))}
+        title="zoom in"
+        aria-label="Zoom in"
+      >
         ＋
       </button>
       <button
         className="font-mono text-xs px-1.5 h-6 border border-border text-muted hover:text-fg hover:border-fg tabular-nums"
         onClick={() => onScaleChange(1)}
         title="reset to 100%"
+        aria-label={`Reset zoom (currently ${Math.round(scale * 100)}%)`}
       >
         {Math.round(scale * 100)}%
       </button>
