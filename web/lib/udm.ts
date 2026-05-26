@@ -184,6 +184,7 @@ export interface ShapeLayer {
   fill?: unknown;
   stroke?: unknown;
   opacity?: number;
+  _meta?: { added?: boolean };
 }
 
 export interface AnnotationLayer {

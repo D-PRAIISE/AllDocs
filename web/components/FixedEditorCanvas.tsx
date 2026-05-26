@@ -23,13 +23,16 @@ import {
 
 type FamilyClass = "sans" | "serif" | "mono";
 
-/** The one active editor tool. "none" = plain click-to-edit text. */
+/** The one active editor tool. "none" = plain click-to-edit text.
+ * "select" = arrow tool for clicking any image/shape to select + resize. */
 type EditorMode =
   | "none"
+  | "select"
   | "region-image"
   | "recolor"
   | "add-text"
   | "add-image"
+  | "add-rect"
   | "highlight"
   | "comment"
   | "ink"
@@ -415,6 +418,10 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
           if (!isAdded) continue;
         } else if (layer.type === "text") {
           if (!layer.runs[0]?._meta?.added) continue;
+        } else if (layer.type === "shape") {
+          // Only added shapes are safe to delete; original-document
+          // shapes are part of the rendered layout.
+          if (!layer._meta?.added) continue;
         } else if (layer.type === "annotation") {
           // OK to delete
         } else {
@@ -444,6 +451,12 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
           for (const run of layer.runs) {
             run.x = { value: lengthToPt(run.x) + dxPt, unit: "pt" };
             run.y = { value: lengthToPt(run.y) + dyPt, unit: "pt" };
+          }
+        } else if (layer.type === "shape") {
+          const geom = layer.geometry as { kind?: string; x?: Length; y?: Length };
+          if (geom?.kind === "rect" && geom.x && geom.y) {
+            geom.x = { value: lengthToPt(geom.x) + dxPt, unit: "pt" };
+            geom.y = { value: lengthToPt(geom.y) + dyPt, unit: "pt" };
           }
         }
       }
@@ -496,6 +509,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   const recolorMode = mode === "recolor";
   const addTextMode = mode === "add-text";
   const addImageMode = mode === "add-image";
+  const addRectMode = mode === "add-rect";
+  const selectMode = mode === "select";
   const highlightMode = mode === "highlight";
   const commentMode = mode === "comment";
   const inkMode = mode === "ink";
@@ -844,6 +859,62 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     [doc, onChange]
   );
 
+  // Place a net-new rectangle shape from a drag-defined region.
+  const addRect = useCallback(
+    (pageIdx: number, rect: { x: number; y: number; w: number; h: number }) => {
+      if (rect.w < 2 || rect.h < 2) {
+        setMode("none");
+        return;
+      }
+      const next = structuredClone(doc) as Document;
+      const page = (next.content as FixedContent).pages[pageIdx];
+      if (!page) return;
+      const k = (72 / 96) / scale;
+      page.layers.push({
+        type: "shape",
+        geometry: {
+          kind: "rect",
+          x: { value: rect.x * k, unit: "pt" },
+          y: { value: rect.y * k, unit: "pt" },
+          w: { value: rect.w * k, unit: "pt" },
+          h: { value: rect.h * k, unit: "pt" },
+        },
+        // Default to a translucent gray so the rect is visible against
+        // anything; user can immediately recolor.
+        fill: { kind: "solid", color: { literal: { kind: "hex", hex: "#cbd5e1" } } },
+        opacity: 0.6,
+        _meta: { added: true },
+      } as never);
+      onChange(next);
+      setMode("none");
+    },
+    [doc, onChange, scale]
+  );
+
+  // Resize a shape layer (rect geometry only for v1).
+  const resizeShapeLayer = useCallback(
+    (
+      pageIdx: number,
+      layerIdx: number,
+      xPt: number,
+      yPt: number,
+      wPt: number,
+      hPt: number
+    ) => {
+      const next = structuredClone(doc) as Document;
+      const layer = (next.content as FixedContent).pages[pageIdx]?.layers[layerIdx];
+      if (!layer || layer.type !== "shape") return;
+      const geom = layer.geometry as { kind?: string; x?: unknown; y?: unknown; w?: unknown; h?: unknown };
+      if (geom?.kind !== "rect") return;
+      geom.x = { value: xPt, unit: "pt" };
+      geom.y = { value: yPt, unit: "pt" };
+      geom.w = { value: wPt, unit: "pt" };
+      geom.h = { value: hPt, unit: "pt" };
+      onChange(next, `resize-shape-${pageIdx}-${layerIdx}`);
+    },
+    [doc, onChange]
+  );
+
   // Resize an image layer by setting all four (x, y, width, height) at
   // once — corner handles change three or four values, edge handles two.
   // Coalesces under one key for the whole drag so undo collapses the
@@ -913,10 +984,11 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     return () => window.removeEventListener("keydown", onKey);
   }, [searchOpen, selected, deleteSelected, nudgeSelected]);
 
-  // Any non-default mode (recolor, add-*, highlight, …) should clear the
-  // selection — the handles would just get in the way.
+  // Any mode other than "none" or "select" clears selection — recolor,
+  // add-*, highlight, … shouldn't see leftover handles getting in the way.
+  // "select" deliberately keeps selection (that's the whole point).
   useEffect(() => {
-    if (mode !== "none") setSelected(new Set());
+    if (mode !== "none" && mode !== "select") setSelected(new Set());
     // mode is the only thing we react to here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
@@ -1024,6 +1096,12 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               onResizeImage={(layerIdx, xPt, yPt, wPt, hPt) =>
                 resizeImageLayer(pageIdx, layerIdx, xPt, yPt, wPt, hPt)
               }
+              onResizeShape={(layerIdx, xPt, yPt, wPt, hPt) =>
+                resizeShapeLayer(pageIdx, layerIdx, xPt, yPt, wPt, hPt)
+              }
+              selectMode={selectMode}
+              addRectMode={addRectMode}
+              onAddRect={(rect) => addRect(pageIdx, rect)}
               searchMatches={searchMatches.filter((m) => m.pageIdx === pageIdx)}
               activeMatchKey={
                 searchMatches[searchActiveIdx]
@@ -1255,6 +1333,10 @@ function FixedPageEditor({
   pageSelectionKeyOf,
   onSelect,
   onResizeImage,
+  onResizeShape,
+  selectMode,
+  addRectMode,
+  onAddRect,
   searchMatches,
   activeMatchKey,
   showAutoDetected,
@@ -1300,6 +1382,16 @@ function FixedPageEditor({
     wPt: number,
     hPt: number
   ) => void;
+  onResizeShape: (
+    layerIdx: number,
+    xPt: number,
+    yPt: number,
+    wPt: number,
+    hPt: number
+  ) => void;
+  selectMode: boolean;
+  addRectMode: boolean;
+  onAddRect: (rect: { x: number; y: number; w: number; h: number }) => void;
   searchMatches: ReadonlyArray<{
     layerIdx: number;
     runIdx: number;
@@ -1359,13 +1451,19 @@ function FixedPageEditor({
             )
             .map(({ layer, layerIdx }) => {
               if (layer.type === "shape") {
+                const selKey = pageSelectionKeyOf(layerIdx);
+                const isShapeSelected = selectedKeys.has(selKey);
                 return (
                   <ShapeNode
                     key={layerIdx}
                     layer={layer}
                     scale={scale}
-                    interactive={recolorMode}
-                    onClick={recolorMode ? () => onRecolorShape(layerIdx) : undefined}
+                    interactive={recolorMode || selectMode}
+                    isSelected={isShapeSelected}
+                    onClick={(additive) => {
+                      if (recolorMode) onRecolorShape(layerIdx);
+                      else if (selectMode) onSelect(layerIdx, additive);
+                    }}
                   />
                 );
               }
@@ -1379,6 +1477,7 @@ function FixedPageEditor({
                     onMove={(xPt, yPt) => onMoveImage(layerIdx, xPt, yPt)}
                     onSelect={(additive) => onSelect(layerIdx, additive)}
                     isSelected={selectedKeys.has(pageSelectionKeyOf(layerIdx))}
+                    forceInteractive={selectMode}
                   />
                 );
               }
@@ -1410,16 +1509,40 @@ function FixedPageEditor({
             const [p, l] = onlyKey.split(":").map(Number);
             if (p !== pageIdx) return null;
             const layer = page.layers[l];
-            if (!layer || layer.type !== "image") return null;
-            return (
-              <ResizeHandles
-                layer={layer}
-                scale={scale}
-                onResize={(xPt, yPt, wPt, hPt) =>
-                  onResizeImage(l, xPt, yPt, wPt, hPt)
-                }
-              />
-            );
+            if (!layer) return null;
+            if (layer.type === "image") {
+              return (
+                <ResizeHandles
+                  xPx={lengthToPx(layer.x) * scale}
+                  yPx={lengthToPx(layer.y) * scale}
+                  wPx={lengthToPx(layer.width) * scale}
+                  hPx={lengthToPx(layer.height) * scale}
+                  scale={scale}
+                  onResize={(xPt, yPt, wPt, hPt) =>
+                    onResizeImage(l, xPt, yPt, wPt, hPt)
+                  }
+                />
+              );
+            }
+            if (layer.type === "shape") {
+              const geom = layer.geometry as
+                | { kind?: string; x?: Length; y?: Length; w?: Length; h?: Length }
+                | undefined;
+              if (geom?.kind !== "rect" || !geom.x || !geom.y || !geom.w || !geom.h) return null;
+              return (
+                <ResizeHandles
+                  xPx={lengthToPx(geom.x) * scale}
+                  yPx={lengthToPx(geom.y) * scale}
+                  wPx={lengthToPx(geom.w) * scale}
+                  hPx={lengthToPx(geom.h) * scale}
+                  scale={scale}
+                  onResize={(xPt, yPt, wPt, hPt) =>
+                    onResizeShape(l, xPt, yPt, wPt, hPt)
+                  }
+                />
+              );
+            }
+            return null;
           })()}
           {searchMatches.map((m) => {
             const key = `${pageIdx}:${m.layerIdx}:${m.runIdx}`;
@@ -1450,6 +1573,9 @@ function FixedPageEditor({
         />
       ) : null}
       {placeMode ? <RegionSelectOverlay onComplete={onPlaceRegion} /> : null}
+      {addRectMode ? (
+        <RegionSelectOverlay onComplete={onAddRect} accentColor="#cbd5e1" />
+      ) : null}
       {highlightMode ? (
         <RegionSelectOverlay onComplete={onAddHighlight} accentColor="#ffeb3b" />
       ) : null}
@@ -1473,6 +1599,8 @@ function FixedPageEditor({
       {!placeMode &&
       !addTextMode &&
       !addImageMode &&
+      !addRectMode &&
+      !selectMode &&
       !highlightMode &&
       !commentMode &&
       !inkMode &&
@@ -2036,29 +2164,31 @@ function TextRunNode({
   );
 }
 
-/** Eight-handle resize box around an image layer.
+/** Eight-handle resize box around a bounding rect.
  *
  * Corner handles change x/y and width/height together (the opposite
  * corner stays fixed). Edge handles change one dimension. Shift held
  * on a corner drag locks the aspect ratio.
  *
- * Coordinates: PDF points are the source of truth (UDM stores layer
- * positions in pt). We work in canvas pixels for hit-testing and
- * convert back to pt when committing through onResize.
+ * Coordinates: caller passes a raw bbox in canvas pixels + scale, and
+ * receives PDF-point values via onResize. Works for any layer type
+ * with an (x, y, w, h) — image layers, rect shape layers, etc.
  */
 function ResizeHandles({
-  layer,
+  xPx: x,
+  yPx: y,
+  wPx: w,
+  hPx: h,
   scale,
   onResize,
 }: {
-  layer: UdmImageLayer;
+  xPx: number;
+  yPx: number;
+  wPx: number;
+  hPx: number;
   scale: number;
   onResize: (xPt: number, yPt: number, wPt: number, hPt: number) => void;
 }) {
-  const x = lengthToPx(layer.x) * scale;
-  const y = lengthToPx(layer.y) * scale;
-  const w = lengthToPx(layer.width) * scale;
-  const h = lengthToPx(layer.height) * scale;
   const pxToPt = (px: number) => (px / scale) * (72 / 96);
 
   const SIZE = 10;
@@ -2204,6 +2334,7 @@ function ImageNode({
   onMove,
   onSelect,
   isSelected,
+  forceInteractive,
 }: {
   layer: UdmImageLayer;
   resources: Document["resources"];
@@ -2211,6 +2342,7 @@ function ImageNode({
   onMove: (xPt: number, yPt: number) => void;
   onSelect?: (additive: boolean) => void;
   isSelected?: boolean;
+  forceInteractive?: boolean;
 }) {
   const img = resources.images.find((i) => i.id === layer.image_id);
   const ref = img?.data_ref ?? "";
@@ -2259,24 +2391,32 @@ function ImageNode({
       height={h}
       rotation={layer.rotation ?? 0}
       opacity={layer.opacity ?? 1}
-      // Only added images are interactive (draggable). Existing images
-      // stay non-listening so clicks fall through to text on top of them
-      // (off-page / oversized images otherwise swallow those clicks).
-      listening={added}
+      // Existing images normally stay non-listening so clicks fall
+      // through to text on top of them. `forceInteractive` (select tool)
+      // overrides that so the user can pick them up to resize/delete.
+      // Drag-to-move stays added-only — moving an existing image around
+      // the canvas would corrupt the source layout silently.
+      listening={added || !!forceInteractive}
       draggable={added}
       onDragEnd={added ? onDragEnd : undefined}
       onMouseDown={
-        added && onSelect
+        (added || forceInteractive) && onSelect
           ? (e: KonvaEventObject<MouseEvent>) => onSelect((e.evt as MouseEvent).shiftKey)
           : undefined
       }
       stroke={isSelected ? "#5b9bd5" : undefined}
       strokeWidth={isSelected ? 1 : 0}
       onMouseEnter={
-        added ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "move") : undefined
+        added
+          ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "move")
+          : forceInteractive
+          ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "pointer")
+          : undefined
       }
       onMouseLeave={
-        added ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "default") : undefined
+        added || forceInteractive
+          ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "default")
+          : undefined
       }
     />
   );
@@ -2305,12 +2445,14 @@ function ShapeNode({
   layer,
   scale,
   interactive,
+  isSelected,
   onClick,
 }: {
   layer: UdmShapeLayer;
   scale: number;
   interactive?: boolean;
-  onClick?: () => void;
+  isSelected?: boolean;
+  onClick?: (additive: boolean) => void;
 }) {
   const geom = layer.geometry as
     | { kind?: string; x?: never; y?: never; w?: never; h?: never }
@@ -2338,12 +2480,15 @@ function ShapeNode({
       width={w}
       height={h}
       fill={fillColor}
-      stroke={strokeColor}
-      strokeWidth={strokeWidth}
+      stroke={isSelected ? "#5b9bd5" : strokeColor}
+      strokeWidth={isSelected ? Math.max(1, strokeWidth) : strokeWidth}
       opacity={layer.opacity ?? 1}
       listening={!!interactive}
-      onClick={onClick}
-      onTap={onClick}
+      onMouseDown={
+        interactive && onClick
+          ? (e: KonvaEventObject<MouseEvent>) => onClick((e.evt as MouseEvent).shiftKey)
+          : undefined
+      }
       onMouseEnter={
         interactive
           ? (e: KonvaEventObject<MouseEvent>) => setCursor(e, "pointer")
@@ -2550,10 +2695,12 @@ function TextEditOverlay({
 
 const MODE_HINT: Record<EditorMode, string> = {
   none: "click any text to edit · enter to commit · esc to cancel",
+  select: "click any image or shape to select · drag handles to resize · shift to multi-select",
   "region-image": "drag a box over the area to replace, then pick an image",
   recolor: "click any shape to recolor it",
   "add-text": "click where you want the new text",
   "add-image": "click where you want the new image, then pick a file",
+  "add-rect": "drag a box to draw a rectangle",
   highlight: "drag over text to highlight it",
   comment: "click where you want a sticky-note comment",
   ink: "draw freehand — mouse-up commits the stroke",
@@ -2589,8 +2736,10 @@ function EditorHeader({
         : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
     }`;
   const tools: { m: EditorMode; label: string }[] = [
+    { m: "select", label: "⬚ select" },
     { m: "add-text", label: "✎ add text" },
     { m: "add-image", label: "🖼 add image" },
+    { m: "add-rect", label: "▭ add rect" },
     { m: "recolor", label: "◐ recolor shape" },
     { m: "region-image", label: "⊕ replace region" },
     { m: "highlight", label: "▮ highlight" },
