@@ -119,8 +119,23 @@ def is_scanned_page(page: pymupdf.Page) -> bool:
     return (covered / page_area) >= _MIN_IMAGE_COVERAGE
 
 
-def ocr_page(page: pymupdf.Page, dpi: int = OCR_DPI) -> OcrResult:
-    """Render ``page`` and OCR it. Returns line-level runs in PDF points.
+def ocr_page(
+    page: pymupdf.Page,
+    dpi: int = OCR_DPI,
+    lang: str | None = None,
+    granularity: str = "line",
+) -> OcrResult:
+    """Render ``page`` and OCR it. Returns runs in PDF points.
+
+    ``lang`` is a Tesseract language spec ("eng", "chi_sim", "jpn",
+    "eng+chi_sim", …). None defaults to Tesseract's own default (eng).
+    The language pack must be installed (tessdata dir next to the
+    binary); unknown languages raise from pytesseract.
+
+    ``granularity`` is "line" (default — one run per OCR'd line) or
+    "word" (one run per token). Word granularity lets the editor
+    redact + replace a single word without disturbing the rest of
+    the line.
 
     Raises RuntimeError if Tesseract or pytesseract is unavailable —
     callers should check ``tesseract_available()`` first if they want
@@ -148,13 +163,51 @@ def ocr_page(page: pymupdf.Page, dpi: int = OCR_DPI) -> OcrResult:
 
     pix = page.get_pixmap(dpi=dpi)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-    data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+
+    kwargs: dict[str, Any] = {"output_type": pytesseract.Output.DICT}
+    if lang:
+        kwargs["lang"] = lang
+    data = pytesseract.image_to_data(img, **kwargs)
 
     scale = 72.0 / dpi  # pixels -> points
 
-    # Group word tokens by (block, paragraph, line).
-    lines: dict[tuple[int, int, int], list[int]] = {}
+    runs: list[OcrRun] = []
     n = len(data["text"])
+
+    if granularity == "word":
+        # One run per OCR token. Skip empties + low-confidence garbage.
+        for i in range(n):
+            text = (data["text"][i] or "").strip()
+            if not text:
+                continue
+            try:
+                conf = float(data["conf"][i])
+            except (TypeError, ValueError):
+                conf = -1.0
+            if conf < MIN_WORD_CONFIDENCE:
+                continue
+            px0 = int(data["left"][i])
+            py0 = int(data["top"][i])
+            px1 = px0 + int(data["width"][i])
+            py1 = py0 + int(data["height"][i])
+            bg = _sample_background(img, px0, py0, px1, py1)
+            color = _sample_ink_color(img, px0, py0, px1, py1, bg)
+            runs.append(
+                OcrRun(
+                    text=text,
+                    x0=px0 * scale,
+                    y0=py0 * scale,
+                    x1=px1 * scale,
+                    y1=py1 * scale,
+                    confidence=round(conf / 100.0, 4),
+                    color=color,
+                    bg_color=bg,
+                )
+            )
+        return OcrResult(runs=runs, engine=_ENGINE_NAME)
+
+    # Line granularity (default): group word tokens by (block, par, line).
+    lines: dict[tuple[int, int, int], list[int]] = {}
     for i in range(n):
         text = (data["text"][i] or "").strip()
         if not text:
@@ -168,7 +221,6 @@ def ocr_page(page: pymupdf.Page, dpi: int = OCR_DPI) -> OcrResult:
         key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
         lines.setdefault(key, []).append(i)
 
-    runs: list[OcrRun] = []
     for key in sorted(lines.keys()):
         idxs = sorted(lines[key], key=lambda i: data["word_num"][i])
         words = [data["text"][i].strip() for i in idxs]

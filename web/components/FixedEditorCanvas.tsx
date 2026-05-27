@@ -198,7 +198,16 @@ function loadImageEl(src: string): Promise<HTMLImageElement> {
  * the result as a PNG data URL. ``region`` is in the base image's own
  * intrinsic pixels. Used for region-scoped image replacement: the user
  * frames part of a (possibly page-sized) image and only that area is
- * swapped — the rest of the image is preserved. */
+ * swapped — the rest of the image is preserved.
+ *
+ * Crop strategy (lesson #6): when the overlay's aspect doesn't match
+ * the target region, crop the overlay (not the region) to preserve
+ * pixel fidelity. For portrait overlays (taller than wide) we bias
+ * the vertical crop toward the top so heads stay in frame; for other
+ * aspect mismatches we center-crop. A future enhancement is true
+ * face-aware bias via face-api.js / MediaPipe, lazy-loaded only on
+ * image-replace use.
+ */
 async function compositeImageIntoRegion(
   baseUrl: string,
   baseW: number,
@@ -214,7 +223,37 @@ async function compositeImageIntoRegion(
   const base = await loadImageEl(baseUrl);
   ctx.drawImage(base, 0, 0, baseW, baseH);
   const overlay = await loadImageEl(overlayUrl);
-  ctx.drawImage(overlay, region.x, region.y, region.w, region.h);
+
+  const oW = overlay.naturalWidth || overlay.width;
+  const oH = overlay.naturalHeight || overlay.height;
+  const rAspect = region.w / region.h;
+  const oAspect = oW / oH;
+
+  // Source rect on the overlay — the portion we'll actually paint.
+  let sx = 0;
+  let sy = 0;
+  let sw = oW;
+  let sh = oH;
+
+  // Tolerance: don't bother cropping when aspects are within 2%.
+  if (Math.abs(oAspect - rAspect) > 0.02) {
+    if (oAspect > rAspect) {
+      // Overlay is wider than the region — crop left + right. Center
+      // horizontally; faces in non-portrait shots are typically centred.
+      sw = oH * rAspect;
+      sx = (oW - sw) / 2;
+    } else {
+      // Overlay is taller than the region — crop top + bottom. For
+      // portraits (oAspect < 0.85) bias the crop window upward so the
+      // head stays in frame; otherwise centre.
+      sh = oW / rAspect;
+      const isPortrait = oAspect < 0.85;
+      const verticalBias = isPortrait ? 0.15 : 0.5;
+      sy = (oH - sh) * verticalBias;
+    }
+  }
+
+  ctx.drawImage(overlay, sx, sy, sw, sh, region.x, region.y, region.w, region.h);
   return canvas.toDataURL("image/png");
 }
 
@@ -389,6 +428,48 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   }, [searchActiveIdx, searchMatches, searchOpen]);
 
   // ---- delete + nudge for selected layers --------------------------
+  // Pending "compact upward?" offer surfaced after a delete (lesson #5).
+  // Holds the y-range of what was deleted, per page, so the follow-up
+  // shift knows what to close.
+  const [compactOffer, setCompactOffer] = useState<
+    { pageIdx: number; yMinPt: number; yMaxPt: number } | null
+  >(null);
+
+  // Helper: rough y-extent of a layer in PDF points.
+  const layerYExtent = (
+    layer: { type: string } & Record<string, unknown>,
+    resources: Document["resources"]
+  ): { y0: number; y1: number } | null => {
+    if (layer.type === "image") {
+      const im = layer as unknown as { y: Length; height: Length };
+      const y0 = lengthToPt(im.y);
+      return { y0, y1: y0 + lengthToPt(im.height) };
+    }
+    if (layer.type === "text") {
+      const t = layer as unknown as { runs: { y: Length; font_size: Length }[] };
+      let y0 = Infinity;
+      let y1 = -Infinity;
+      for (const r of t.runs) {
+        const baselineY = lengthToPt(r.y);
+        const size = lengthToPt(r.font_size);
+        y0 = Math.min(y0, baselineY - size);
+        y1 = Math.max(y1, baselineY);
+      }
+      if (y0 === Infinity) return null;
+      return { y0, y1 };
+    }
+    if (layer.type === "shape") {
+      const s = layer as unknown as { geometry: { kind?: string; y?: Length; h?: Length } };
+      const g = s.geometry;
+      if (g?.kind === "rect" && g.y && g.h) {
+        const y0 = lengthToPt(g.y);
+        return { y0, y1: y0 + lengthToPt(g.h) };
+      }
+    }
+    void resources;
+    return null;
+  };
+
   const deleteSelected = useCallback(() => {
     if (selected.size === 0) return;
     const next = structuredClone(doc) as Document;
@@ -402,6 +483,9 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       arr.push(l);
       byPage.set(p, arr);
     }
+    // Track the y-extents we actually deleted, per page, so a follow-up
+    // compact pass knows what gap to close.
+    const deletedExtents = new Map<number, { yMin: number; yMax: number }>();
     for (const [pageIdx, layerIdxs] of byPage) {
       const page = content.pages[pageIdx];
       if (!page) continue;
@@ -428,12 +512,89 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         } else {
           continue;
         }
+        const ext = layerYExtent(layer as never, next.resources);
+        if (ext) {
+          const cur = deletedExtents.get(pageIdx);
+          if (cur) {
+            cur.yMin = Math.min(cur.yMin, ext.y0);
+            cur.yMax = Math.max(cur.yMax, ext.y1);
+          } else {
+            deletedExtents.set(pageIdx, { yMin: ext.y0, yMax: ext.y1 });
+          }
+        }
         page.layers.splice(l, 1);
       }
     }
     setSelected(new Set());
     onChange(next);
+    // Offer compact upward for the largest gap left by this deletion.
+    // Lesson #5: per-edit decision, not a global setting. The banner
+    // auto-clears on any subsequent edit.
+    if (deletedExtents.size > 0) {
+      let bestPage = -1;
+      let bestGap = 0;
+      let bestYMin = 0;
+      let bestYMax = 0;
+      for (const [p, ext] of deletedExtents) {
+        const gap = ext.yMax - ext.yMin;
+        if (gap > bestGap) {
+          bestGap = gap;
+          bestPage = p;
+          bestYMin = ext.yMin;
+          bestYMax = ext.yMax;
+        }
+      }
+      // Only offer when the gap is visually meaningful (>= 12pt — one
+      // line of body text). Smaller gaps aren't worth a UI prompt.
+      if (bestGap >= 12 && bestPage >= 0) {
+        setCompactOffer({ pageIdx: bestPage, yMinPt: bestYMin, yMaxPt: bestYMax });
+      }
+    }
   }, [doc, onChange, selected]);
+
+  const applyCompactUpward = useCallback(() => {
+    if (!compactOffer) return;
+    const { pageIdx, yMinPt, yMaxPt } = compactOffer;
+    const delta = yMaxPt - yMinPt;
+    if (delta <= 0) {
+      setCompactOffer(null);
+      return;
+    }
+    const next = structuredClone(doc) as Document;
+    const page = (next.content as FixedContent).pages[pageIdx];
+    if (!page) {
+      setCompactOffer(null);
+      return;
+    }
+    // Shift every layer whose y-extent starts below the deleted region
+    // upward by the gap height. Per-layer y mutation mirrors nudge.
+    for (const layer of page.layers) {
+      if (layer.type === "image") {
+        const y = lengthToPt(layer.y);
+        if (y >= yMaxPt) {
+          layer.y = { value: y - delta, unit: "pt" };
+        }
+      } else if (layer.type === "text") {
+        for (const run of layer.runs) {
+          const y = lengthToPt(run.y);
+          if (y >= yMaxPt) {
+            run.y = { value: y - delta, unit: "pt" };
+          }
+        }
+      } else if (layer.type === "shape") {
+        const g = layer.geometry as { kind?: string; y?: Length };
+        if (g?.kind === "rect" && g.y) {
+          const y = lengthToPt(g.y);
+          if (y >= yMaxPt) {
+            g.y = { value: y - delta, unit: "pt" };
+          }
+        }
+      }
+    }
+    setCompactOffer(null);
+    onChange(next);
+  }, [compactOffer, doc, onChange]);
+
 
   const nudgeSelected = useCallback(
     (dxPt: number, dyPt: number) => {
@@ -1060,6 +1221,28 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         onToggleAutoDetected={() => setShowAutoDetected((v) => !v)}
       />
       <PageOpsPanel doc={doc} onChange={onChange} />
+      {compactOffer ? (
+        <div className="border border-accent/40 bg-accent/10 px-3 py-2 flex items-center gap-3 flex-wrap">
+          <span className="label">
+            page {compactOffer.pageIdx + 1} · {Math.round(compactOffer.yMaxPt - compactOffer.yMinPt)}pt gap
+          </span>
+          <span className="font-mono text-xs text-fg">
+            close it by shifting content below up?
+          </span>
+          <button
+            onClick={applyCompactUpward}
+            className="font-mono text-xs px-2 py-1 border border-accent text-accent hover:bg-accent hover:text-accent-fg"
+          >
+            ↑ compact upward
+          </button>
+          <button
+            onClick={() => setCompactOffer(null)}
+            className="font-mono text-xs px-2 py-1 border border-border text-muted hover:text-fg hover:border-fg"
+          >
+            leave gap
+          </button>
+        </div>
+      ) : null}
       {searchOpen ? (
         <SearchBar
           query={searchQuery}

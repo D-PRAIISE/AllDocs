@@ -87,14 +87,49 @@ def export_pdf(
     doc = pymupdf.open()
     try:
         font_handles = _resolve_fonts(udm["resources"]["fonts"], base)
+        tounicode_cmaps = _load_tounicode_cmaps(udm["resources"]["fonts"], base)
+        # Track (page_num, font_id) pairs we've already attached so we
+        # only run the xref injection once per font per page.
+        attached_tounicode: set[tuple[int, str]] = set()
 
         for page_data in udm["content"]["pages"]:
-            _render_page(doc, page_data, udm["resources"], font_handles, base)
+            _render_page(
+                doc,
+                page_data,
+                udm["resources"],
+                font_handles,
+                base,
+                tounicode_cmaps=tounicode_cmaps,
+                attached_tounicode=attached_tounicode,
+            )
 
         _apply_metadata(doc, udm.get("metadata", {}))
         doc.save(str(output_path), garbage=4, deflate=True, clean=True)
     finally:
         doc.close()
+
+
+def _load_tounicode_cmaps(
+    fonts: list[dict[str, Any]],
+    base: Path,
+) -> dict[str, bytes]:
+    """Read saved /ToUnicode CMap files for each font that has one
+    (importer stashes the path under font._meta.tounicode_cmap). Used
+    by the render path to re-attach the CMap so a re-embedded CIDFont
+    stays text-extractable. Lesson #13.
+    """
+    out: dict[str, bytes] = {}
+    for font in fonts:
+        ref = (font.get("_meta") or {}).get("tounicode_cmap")
+        if not ref:
+            continue
+        try:
+            path = _resolve_relative(base, str(ref))
+            if path.exists():
+                out[font["id"]] = path.read_bytes()
+        except Exception:
+            continue
+    return out
 
 
 def _try_passthrough(
@@ -275,22 +310,40 @@ def _render_page(
     resources: dict[str, Any],
     font_handles: dict[str, FontHandle],
     base: Path,
+    tounicode_cmaps: dict[str, bytes] | None = None,
+    attached_tounicode: set[tuple[int, str]] | None = None,
 ) -> None:
     width_pt = _length_to_pt(page_data["width"])
     height_pt = _length_to_pt(page_data["height"])
     page = doc.new_page(width=width_pt, height=height_pt)
 
-    # Sort layers by paint order. See _layer_order_key for the bg/fg shape
-    # split. Long-term the importer should capture content-stream order so
-    # this heuristic isn't needed (project_alldocs_pdf_adapter.md lesson #11).
-    layers = sorted(
-        page_data.get("layers", []),
-        key=lambda layer: _layer_order_key(layer, width_pt, height_pt),
-    )
+    # Sort layers by paint order. The importer now stamps _meta.z_index
+    # from page.get_bboxlog() (lesson #11) — when present that's the real
+    # content-stream position. Layers without a stamped z-index fall
+    # back to the older type-bucket heuristic (added content, form
+    # layers, OCR runs, etc., don't come from get_bboxlog).
+    def _key(layer: dict[str, Any]) -> tuple[int, int]:
+        meta = layer.get("_meta") or {}
+        z = meta.get("z_index")
+        bucket = _layer_order_key(layer, width_pt, height_pt)
+        # Primary sort: z_index if available; fall back to a synthetic
+        # large index so unstamped layers paint after the stamped ones
+        # in the order they appear in the UDM (Python sort is stable).
+        if isinstance(z, int):
+            return (0, z)
+        return (1, bucket)
+
+    layers = sorted(page_data.get("layers", []), key=_key)
     for layer in layers:
         kind = layer.get("type")
         if kind == "text":
-            _render_text_layer(page, layer, font_handles)
+            _render_text_layer(
+                page,
+                layer,
+                font_handles,
+                tounicode_cmaps=tounicode_cmaps,
+                attached_tounicode=attached_tounicode,
+            )
         elif kind == "image":
             _render_image_layer(page, layer, resources, base)
         elif kind == "shape":
@@ -302,6 +355,8 @@ def _render_text_layer(
     page: pymupdf.Page,
     layer: dict[str, Any],
     font_handles: dict[str, FontHandle],
+    tounicode_cmaps: dict[str, bytes] | None = None,
+    attached_tounicode: set[tuple[int, str]] | None = None,
 ) -> None:
     for run in layer.get("runs", []):
         text = run.get("text", "")
@@ -324,6 +379,17 @@ def _render_text_layer(
                 fontfile=value,
                 fontname=f"udm_{font_id}",
             )
+            # Lesson #13 "real fix": after PyMuPDF embeds the font on
+            # this page, attach the saved ToUnicode CMap so re-embedded
+            # CIDFonts stay text-extractable. Once per (page, font_id).
+            if tounicode_cmaps and attached_tounicode is not None:
+                cmap_bytes = tounicode_cmaps.get(font_id)
+                if cmap_bytes:
+                    page_num = page.number
+                    key = (page_num, font_id)
+                    if key not in attached_tounicode:
+                        if _attach_tounicode_to_font(page, font_id, cmap_bytes):
+                            attached_tounicode.add(key)
         else:
             page.insert_text(
                 (x, y),
@@ -332,6 +398,53 @@ def _render_text_layer(
                 color=color,
                 fontname=value,
             )
+
+
+def _attach_tounicode_to_font(
+    page: pymupdf.Page,
+    font_id: str,
+    cmap_bytes: bytes,
+) -> bool:
+    """Find the just-inserted font on this page by its udm_<font_id>
+    name and add a /ToUnicode entry pointing at a fresh stream xref
+    holding ``cmap_bytes``. Returns True on success.
+
+    Without ToUnicode, re-embedded CIDFonts (Identity-H encoding) read
+    as .notdef boxes when copy-pasted from the output PDF.
+    """
+    doc = page.parent
+    target_name = f"udm_{font_id}"
+    try:
+        fonts = doc.get_page_fonts(page.number, full=True)
+    except Exception:
+        return False
+    font_xref = 0
+    for entry in fonts:
+        # entry layout: (xref, ext, type, basefont, refname, encoding, ...)
+        try:
+            xref = entry[0]
+            basefont = entry[3] if len(entry) > 3 else ""
+            refname = entry[4] if len(entry) > 4 else ""
+        except (IndexError, TypeError):
+            continue
+        if target_name in str(basefont) or target_name in str(refname):
+            font_xref = int(xref)
+            break
+    if not font_xref:
+        return False
+    try:
+        cmap_xref = doc.get_new_xref()
+        # Mark as a CMap stream — the /Type and /CMapName aren't strictly
+        # required for ToUnicode CMaps but help validators / debuggers.
+        doc.update_object(
+            cmap_xref,
+            "<< /Type /CMap /CMapName /Adobe-Identity-UCS /Length 0 >>",
+        )
+        doc.update_stream(cmap_xref, cmap_bytes)
+        doc.xref_set_key(font_xref, "ToUnicode", f"{cmap_xref} 0 R")
+    except Exception:
+        return False
+    return True
 
 
 def _render_shape_layer(page: pymupdf.Page, layer: dict[str, Any]) -> None:
@@ -515,6 +628,15 @@ def _render_image_layer(
         _length_to_pt(layer["x"]) + _length_to_pt(layer["width"]),
         _length_to_pt(layer["y"]) + _length_to_pt(layer["height"]),
     )
+    # KNOWN LIMITATION (lesson #16): PyMuPDF's insert_image has no
+    # opacity / alpha parameter. Its `alpha` argument is an
+    # alpha-channel flag (PNG transparency), not an opacity multiplier.
+    # When this full-render path runs on a doc whose images had a
+    # Form-XObject `ca` alpha (faint watermarks/logos), the image
+    # paints fully opaque. The passthrough + patch paths preserve the
+    # original faint rendering — only this fallback path is affected.
+    # A proper fix needs a different PDF library (pikepdf) or a
+    # post-render content-stream rewrite, both out of scope for now.
     page.insert_image(
         rect,
         filename=str(img_path),

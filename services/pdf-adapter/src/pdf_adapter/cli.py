@@ -67,6 +67,26 @@ def main(argv: list[str] | None = None) -> int:
         help="Import: skip OCR of scanned/rasterized pages (OCR is on by default).",
     )
     parser.add_argument(
+        "--ocr-lang",
+        default=None,
+        help=(
+            "Import: Tesseract language spec for OCR (e.g. 'eng', 'chi_sim', "
+            "'jpn', 'eng+chi_sim'). The language pack must be installed "
+            "alongside the Tesseract binary. Defaults to Tesseract's own "
+            "default (eng)."
+        ),
+    )
+    parser.add_argument(
+        "--ocr-granularity",
+        choices=["line", "word"],
+        default="line",
+        help=(
+            "Import: 'line' (default) emits one OCR run per recognized line; "
+            "'word' emits one run per token — better when single-word edits "
+            "should not rebuild a whole line."
+        ),
+    )
+    parser.add_argument(
         "--export",
         action="store_true",
         help="Export mode: input is a UDM JSON, output is a PDF",
@@ -107,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
         assets_url_prefix=args.assets_url_prefix,
         source_url=args.source_url,
         enable_ocr=not args.no_ocr,
+        ocr_lang=args.ocr_lang,
+        ocr_granularity=args.ocr_granularity,
     )
 
     if args.summary:

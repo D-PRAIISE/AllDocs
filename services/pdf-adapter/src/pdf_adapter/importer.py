@@ -21,6 +21,7 @@ Asset extraction (optional):
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,8 @@ def import_pdf(
     assets_url_prefix: str = "",
     source_url: str | None = None,
     enable_ocr: bool = True,
+    ocr_lang: str | None = None,
+    ocr_granularity: str = "line",
 ) -> dict[str, Any]:
     """Read a PDF file and produce a UDM v0.1.0 document.
 
@@ -93,7 +96,7 @@ def import_pdf(
             pages.append(_page_to_udm(page, page_idx + 1, fonts, images, doc))
 
         if enable_ocr:
-            _apply_ocr(doc, pages, fonts)
+            _apply_ocr(doc, pages, fonts, lang=ocr_lang, granularity=ocr_granularity)
 
         native_meta = doc.metadata or {}
 
@@ -148,6 +151,8 @@ def _apply_ocr(
     doc: pymupdf.Document,
     pages: list[dict[str, Any]],
     fonts: dict[str, dict[str, Any]],
+    lang: str | None = None,
+    granularity: str = "line",
 ) -> None:
     """Detect scanned/rasterized pages, OCR them, and append the
     recognized lines as a TextLayer of ``ocr``-marked runs.
@@ -168,7 +173,7 @@ def _apply_ocr(
         if not _ocr.is_scanned_page(page):
             continue
         try:
-            result = _ocr.ocr_page(page)
+            result = _ocr.ocr_page(page, lang=lang, granularity=granularity)
         except RuntimeError:
             continue
         if not result.runs:
@@ -273,6 +278,22 @@ def _extract_assets(
         (fonts_dir / filename).write_bytes(content)
         font["data_ref"] = join(prefix, "fonts", filename)
 
+        # ToUnicode CMap preservation (lesson #13's deep fix). If the
+        # source font dict references a /ToUnicode CMap, save its bytes
+        # alongside the font file so the exporter's render path can
+        # re-attach it. Without this a re-embedded CID/Type0 font loses
+        # text-extractability and reads as ".notdef" boxes.
+        try:
+            cmap_bytes = _extract_tounicode_cmap(doc, xref)
+        except Exception:
+            cmap_bytes = None
+        if cmap_bytes:
+            cmap_filename = f"{font['id']}.tounicode.cmap"
+            (fonts_dir / cmap_filename).write_bytes(cmap_bytes)
+            font.setdefault("_meta", {})["tounicode_cmap"] = join(
+                prefix, "fonts", cmap_filename
+            )
+
 
 def _page_to_udm(
     page: pymupdf.Page,
@@ -282,6 +303,16 @@ def _page_to_udm(
     doc: pymupdf.Document,
 ) -> dict[str, Any]:
     layers: list[dict[str, Any]] = []
+    # Content-stream order map (lesson #11). get_bboxlog yields the
+    # drawing operations in PDF content-stream order; we use the index
+    # in that list as the layer's z-index when its bbox matches. Layers
+    # that can't be matched fall back to the type-bucket sort in the
+    # exporter.
+    try:
+        bboxlog = page.get_bboxlog()
+    except Exception:
+        bboxlog = []
+    z_lookup = _ZIndexLookup(bboxlog)
 
     # Build a clean-name -> (prefixed_basefont, xref) map from the page's
     # font table. span["font"] returns the base name with the subset prefix
@@ -295,6 +326,8 @@ def _page_to_udm(
         span_to_font_info.setdefault(cleaned, (basefont, xref))
 
     text_runs: list[dict[str, Any]] = []
+    # Stamp a per-run z-index too: when text runs are emitted in
+    # multiple paint passes, the exporter can sort runs individually.
     for block in page.get_text("dict").get("blocks", []):
         if block.get("type") != 0:  # 0 = text, 1 = image
             continue
@@ -304,22 +337,29 @@ def _page_to_udm(
                     continue
                 # Use the prefixed basefont if known so subset detection works.
                 basefont, font_xref = span_to_font_info.get(span["font"], (span["font"], 0))
+                bbox = span["bbox"]
                 text_runs.append(
                     {
                         "text": span["text"],
                         "font_id": _ensure_font(fonts, basefont, font_xref),
                         "font_size": _length(span["size"], "pt"),
                         "color": {"literal": _color_int_to_value(span["color"])},
-                        "x": _length(span["bbox"][0], "pt"),
-                        "y": _length(span["bbox"][3], "pt"),
+                        "x": _length(bbox[0], "pt"),
+                        "y": _length(bbox[3], "pt"),
                     }
                 )
     if text_runs:
-        layers.append({"type": "text", "runs": text_runs})
+        # Layer-level z: earliest text op encountered. Reasonable
+        # approximation when all text on a page paints together.
+        z = z_lookup.first(("fill-text", "stroke-text", "ignore-text"))
+        layer: dict[str, Any] = {"type": "text", "runs": text_runs}
+        if z is not None:
+            layer["_meta"] = {"z_index": z}
+        layers.append(layer)
 
     for xref, rect, opacity, clip in _image_placements(page, doc):
         image_id = _ensure_image(images, xref, doc)
-        layer: dict[str, Any] = {
+        layer = {
             "type": "image",
             "image_id": image_id,
             "x": _length(rect.x0, "pt"),
@@ -327,26 +367,33 @@ def _page_to_udm(
             "width": _length(rect.width, "pt"),
             "height": _length(rect.height, "pt"),
         }
+        meta: dict[str, Any] = {}
         if opacity < 1.0:
             layer["opacity"] = opacity
         # A clip path restricts what's visible. Without it the AllDocs
         # canvas re-renders the whole (often page-sized, off-page) image.
         if clip is not None:
-            layer["_meta"] = {
-                "clip": {
-                    "x": round(clip.x0, 2),
-                    "y": round(clip.y0, 2),
-                    "w": round(clip.width, 2),
-                    "h": round(clip.height, 2),
-                }
+            meta["clip"] = {
+                "x": round(clip.x0, 2),
+                "y": round(clip.y0, 2),
+                "w": round(clip.width, 2),
+                "h": round(clip.height, 2),
             }
+        z = z_lookup.match(rect, kinds=("fill-image",))
+        if z is not None:
+            meta["z_index"] = z
+        if meta:
+            layer["_meta"] = meta
         layers.append(layer)
 
-    # Vector drawings — filled/stroked rectangles capture page backgrounds and
-    # column dividers that Canva and other design tools rely on. v0.1 captures
-    # only rect ops with solid fills/strokes; curves, lines, and gradients
-    # land in v0.2.
-    layers.extend(_shape_layers_from_drawings(page))
+    # Vector drawings — backgrounds, dividers, lines, curves. Each gets
+    # a z_index from get_bboxlog so layer ordering survives even when
+    # a shape sits on top of text/images.
+    for shape in _shape_layers_from_drawings(page):
+        z = z_lookup.match_shape(shape)
+        if z is not None:
+            shape.setdefault("_meta", {})["z_index"] = z
+        layers.append(shape)
 
     # AcroForm widgets — present on real fillable PDFs (registration forms,
     # tax forms, contracts). Each becomes a UDM form field that the editor
@@ -620,11 +667,33 @@ def _shape_layers_from_drawings(page: pymupdf.Page) -> list[dict[str, Any]]:
     except Exception:
         return out
 
+    # For shapes drawn with gradient / pattern fills, PyMuPDF's
+    # get_drawings returns fill=None even when the drawing TYPE is a
+    # fill op ('f', 'fs'). Without intervention these shapes vanish on
+    # import. The proper fix needs a deeper PDF parser (pikepdf or
+    # pdfminer) to read /Shading / /Pattern dicts. As a practical
+    # fallback, sample the rendered page at the shape's bbox center to
+    # get an approximate solid color. Layers are marked
+    # _meta.gradient_fallback = True so future code can refine.
+    _gradient_sampler: _GradientFallback | None = None
+
     for d in drawings:
         fill = d.get("fill")
         stroke = d.get("color")
-        if fill is None and stroke is None:
+        d_type = d.get("type") or ""
+        # PyMuPDF type chars: 'f' fill, 's' stroke, 'fs' both, 'b'/'B'
+        # close+fill+stroke variants. If a fill op was actually emitted
+        # but the resolved fill color is None, that's the gradient/
+        # pattern case.
+        is_pattern_fill = fill is None and "f" in d_type and stroke is None
+        if fill is None and stroke is None and not is_pattern_fill:
             continue
+        if is_pattern_fill:
+            if _gradient_sampler is None:
+                _gradient_sampler = _GradientFallback(page)
+            sampled = _gradient_sampler.sample(d.get("rect"))
+            if sampled is not None:
+                fill = sampled
         items = d.get("items") or []
 
         # Fast path: a single rect item with no other geometry. Keep as
@@ -729,6 +798,12 @@ def _attach_shape_paint(
             "kind": "solid",
             "color": {"literal": _color_tuple_to_value(fill)},
         }
+    # Mark layers whose fill was substituted from a rendered-pixel
+    # sample (gradient / pattern path) so downstream tools know the
+    # color is approximate, not authoritative.
+    d_type = drawing.get("type") or ""
+    if "f" in d_type and drawing.get("fill") is None and fill is not None:
+        layer.setdefault("_meta", {})["gradient_fallback"] = True
     stroke_width = float(drawing.get("width") or 0)
     if stroke is not None and stroke_width > 0:
         layer["stroke"] = {
@@ -766,6 +841,181 @@ def _color_int_to_value(color_int: int) -> dict[str, Any]:
         "g": (color_int >> 8) & 0xFF,
         "b": color_int & 0xFF,
     }
+
+
+class _GradientFallback:
+    """Render the page once at low DPI and sample center-of-bbox pixels
+    so shapes with gradient/pattern fills (which PyMuPDF reports as
+    fill=None) get an approximate solid colour instead of vanishing.
+
+    Real gradient/pattern preservation requires a deeper PDF parser
+    (pikepdf, pdfminer) reading the page's /Shading / /Pattern dicts —
+    out of scope for the v0.1 PyMuPDF-only adapter.
+    """
+
+    DPI = 72  # 1pt = 1px → makes coordinate mapping trivial
+
+    def __init__(self, page: pymupdf.Page) -> None:
+        try:
+            self._pix = page.get_pixmap(dpi=self.DPI)
+            self._w = self._pix.width
+            self._h = self._pix.height
+        except Exception:
+            self._pix = None
+            self._w = 0
+            self._h = 0
+
+    def sample(self, rect: Any) -> tuple[float, float, float] | None:
+        if self._pix is None or not rect:
+            return None
+        try:
+            cx = int(round((float(rect.x0) + float(rect.x1)) / 2.0))
+            cy = int(round((float(rect.y0) + float(rect.y1)) / 2.0))
+        except Exception:
+            return None
+        if cx < 0 or cy < 0 or cx >= self._w or cy >= self._h:
+            return None
+        try:
+            px = self._pix.pixel(cx, cy)
+        except Exception:
+            return None
+        if not px or len(px) < 3:
+            return None
+        return (px[0] / 255.0, px[1] / 255.0, px[2] / 255.0)
+
+
+class _ZIndexLookup:
+    """Map a layer's bbox + kind back to its position in get_bboxlog,
+    which is the operation's z-index in the source content stream.
+
+    Lesson #11: a single-pass type-bucket sort doesn't capture unusual
+    layer orderings (image overlaying text, etc.). With per-layer
+    z-indices stamped at import time, the exporter can replay the exact
+    paint order.
+    """
+
+    def __init__(self, bboxlog: list[Any]) -> None:
+        # bboxlog entry shape: (kind, bbox) where kind is e.g.
+        # "fill-text" / "fill-image" / "stroke-rect" / etc.
+        self._entries = list(enumerate(bboxlog))
+
+    def first(self, kinds: tuple[str, ...]) -> int | None:
+        """Return the z-index of the earliest entry whose kind is in
+        ``kinds``. None if no match."""
+        for idx, entry in self._entries:
+            try:
+                kind = entry[0]
+            except (IndexError, TypeError):
+                continue
+            if kind in kinds:
+                return idx
+        return None
+
+    def match(
+        self,
+        rect: Any,
+        kinds: tuple[str, ...],
+        tol: float = 1.5,
+    ) -> int | None:
+        """Find the bboxlog entry whose kind is in ``kinds`` and whose
+        bbox is close to ``rect``. Returns its z-index or None.
+        """
+        try:
+            rx0, ry0, rx1, ry1 = float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)
+        except Exception:
+            return None
+        for idx, entry in self._entries:
+            try:
+                kind = entry[0]
+                bb = entry[1]
+                bx0, by0, bx1, by1 = float(bb.x0), float(bb.y0), float(bb.x1), float(bb.y1)
+            except (IndexError, AttributeError, TypeError):
+                continue
+            if kind not in kinds:
+                continue
+            if (
+                abs(bx0 - rx0) <= tol
+                and abs(by0 - ry0) <= tol
+                and abs(bx1 - rx1) <= tol
+                and abs(by1 - ry1) <= tol
+            ):
+                return idx
+        return None
+
+    def match_shape(self, shape: dict[str, Any]) -> int | None:
+        """Z-index for a captured shape — looks up the corresponding
+        fill-/stroke-rect or fill-path entry by geometry."""
+        geom = shape.get("geometry") or {}
+        if geom.get("kind") == "rect":
+            try:
+                x = float(geom["x"]["value"])
+                y = float(geom["y"]["value"])
+                w = float(geom["w"]["value"])
+                h = float(geom["h"]["value"])
+            except (KeyError, TypeError, ValueError):
+                return None
+            class _Rect:
+                pass
+            r = _Rect()
+            r.x0 = x
+            r.y0 = y
+            r.x1 = x + w
+            r.y1 = y + h
+            return self.match(r, kinds=("fill-rect", "stroke-rect", "fill-path", "stroke-path"))
+        # kind=path — no clean bbox match without re-parsing the d
+        # string. Skip for now; the exporter falls back to bucket sort.
+        return None
+
+
+def _extract_tounicode_cmap(doc: pymupdf.Document, font_xref: int) -> bytes | None:
+    """Return the bytes of the /ToUnicode CMap stream referenced by a
+    font dict, or None if it isn't present / can't be read.
+
+    Type0 fonts hold ToUnicode at the top level. Some PDF producers
+    place it on the DescendantFont instead — we check both. Identity-H
+    encoded fonts almost always need this CMap for text extraction to
+    work after re-embedding.
+    """
+    if not font_xref:
+        return None
+    seen: set[int] = set()
+
+    def _follow(xref: int) -> int | None:
+        if xref in seen:
+            return None
+        seen.add(xref)
+        try:
+            kind, val = doc.xref_get_key(xref, "ToUnicode")
+        except Exception:
+            return None
+        if kind == "xref":
+            # "N 0 R" -> extract N
+            try:
+                return int(str(val).split()[0])
+            except (ValueError, IndexError):
+                return None
+        # No ToUnicode here — for Type0 fonts, descend into
+        # DescendantFonts[0] and check there too.
+        try:
+            kind2, val2 = doc.xref_get_key(xref, "DescendantFonts")
+        except Exception:
+            return None
+        if kind2 != "array":
+            return None
+        # val2 like "[ 9 0 R ]" — pull the first xref.
+        m = re.search(r"(\d+)\s+0\s+R", str(val2))
+        if not m:
+            return None
+        return _follow(int(m.group(1)))
+
+    cmap_xref = _follow(font_xref)
+    if not cmap_xref:
+        return None
+    try:
+        data = doc.xref_stream(cmap_xref)
+    except Exception:
+        return None
+    return data if data else None
 
 
 def _looks_like_subset(basefont: str) -> bool:

@@ -146,9 +146,21 @@ def try_patch_export(
         if fully_patchable:
             for page_idx, page_edits in edits_by_page.items():
                 page = work[page_idx]
+                # Lesson #8 — neighbor preservation. PyMuPDF's
+                # apply_redactions removes the whole text-show op when
+                # the rect touches any of its glyphs, which can wipe
+                # adjacent spans we didn't mean to touch. Snapshot pre-
+                # vs post-redaction spans, then re-insert any
+                # unintended casualties using their original font.
+                pre_spans = _collect_spans(page)
+                intended_rects = [pymupdf.Rect(*e["rect"]) for e in page_edits]
                 for e in page_edits:
                     page.add_redact_annot(e["rect"], fill=None)
                 page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE)
+                post_spans = _collect_spans(page)
+                _reinsert_collateral_spans(
+                    page, pre_spans, post_spans, intended_rects, udm, base_dir
+                )
                 for e in page_edits:
                     _insert_replacement(page, e, udm, base_dir)
 
@@ -952,6 +964,134 @@ def _collect_spans(page: pymupdf.Page) -> list[dict[str, Any]]:
                 if span.get("text"):
                     spans.append(span)
     return spans
+
+
+def _reinsert_collateral_spans(
+    page: pymupdf.Page,
+    pre_spans: list[dict[str, Any]],
+    post_spans: list[dict[str, Any]],
+    intended_rects: list[pymupdf.Rect],
+    udm: dict[str, Any],
+    base_dir: Path,
+) -> None:
+    """Re-insert spans that apply_redactions removed as collateral.
+
+    PyMuPDF redacts whole text-show ops; adjacent spans whose bboxes
+    barely touch a redact rect get wiped along with the intended
+    target. We detect that by diffing the pre/post span sets and
+    inserting any pre-only span that the user did NOT intend to remove
+    (i.e., the span's bbox doesn't overlap any of the intended rects).
+
+    Inserted spans use the source's recorded font / size / color, so
+    the surround visually matches the original (lesson #8).
+    """
+    if not pre_spans:
+        return
+
+    def _key(s: dict[str, Any]) -> tuple[str, int, int, int, int]:
+        bb = s["bbox"]
+        return (
+            s.get("text", ""),
+            int(round(float(bb[0]))),
+            int(round(float(bb[1]))),
+            int(round(float(bb[2]))),
+            int(round(float(bb[3]))),
+        )
+
+    post_keys = {_key(s) for s in post_spans}
+
+    def _rect_overlaps_any(span_bbox: Any, rects: list[pymupdf.Rect]) -> bool:
+        try:
+            sx0, sy0, sx1, sy1 = (
+                float(span_bbox[0]),
+                float(span_bbox[1]),
+                float(span_bbox[2]),
+                float(span_bbox[3]),
+            )
+        except Exception:
+            return False
+        for r in rects:
+            # Standard AABB overlap test.
+            if (
+                sx0 < r.x1
+                and sx1 > r.x0
+                and sy0 < r.y1
+                and sy1 > r.y0
+            ):
+                return True
+        return False
+
+    # Build a font lookup once.
+    fonts_by_id: dict[str, dict[str, Any]] = {}
+    for f in (udm.get("resources") or {}).get("fonts", []) or []:
+        if isinstance(f, dict) and "id" in f:
+            fonts_by_id[f["id"]] = f
+
+    # Map source-PDF span "font" name → our font resource id when we can.
+    name_to_fontid: dict[str, str] = {}
+    for fid, fres in fonts_by_id.items():
+        fam = str(fres.get("family") or "").lower()
+        if fam:
+            name_to_fontid[fam] = fid
+
+    for pre in pre_spans:
+        if _key(pre) in post_keys:
+            continue  # Survived — no reinsertion needed.
+        # Did the user actually mean to redact this? If its bbox
+        # overlaps any intended rect at all, treat it as intended
+        # (the replacement insert will handle the visual result).
+        if _rect_overlaps_any(pre["bbox"], intended_rects):
+            continue
+        # Collateral damage — restore using its own font metadata.
+        text = pre.get("text", "")
+        if not text.strip():
+            continue
+        size = float(pre.get("size") or 12)
+        color_int = int(pre.get("color") or 0)
+        rgb = (
+            ((color_int >> 16) & 0xFF) / 255.0,
+            ((color_int >> 8) & 0xFF) / 255.0,
+            (color_int & 0xFF) / 255.0,
+        )
+        x0 = float(pre["bbox"][0])
+        y1 = float(pre["bbox"][3])
+        # Resolve a font: try the source font name → our font resource;
+        # fall back to a Latin-friendly resource.
+        font_resource = None
+        src_font_name = str(pre.get("font") or "").lower()
+        for fam, fid in name_to_fontid.items():
+            if fam in src_font_name or src_font_name in fam:
+                font_resource = fonts_by_id.get(fid)
+                break
+        font_file = _pick_font_for_text(font_resource, text, base_dir)
+        try:
+            if font_file is not None:
+                fontname = f"udm_reins_{abs(hash(str(font_file))) & 0xFFFFFFFF:x}"
+                try:
+                    page.insert_font(fontname=fontname, fontfile=str(font_file))
+                except Exception:
+                    fontname = None  # type: ignore
+                if fontname:
+                    page.insert_text(
+                        (x0, y1),
+                        text,
+                        fontsize=size,
+                        color=rgb,
+                        fontname=fontname,
+                    )
+                    continue
+            # Fallback: base-14 helvetica.
+            page.insert_text(
+                (x0, y1),
+                text,
+                fontsize=size,
+                color=rgb,
+                fontname="helv",
+            )
+        except Exception:
+            # A single failed reinsertion shouldn't abort the export;
+            # the patch path stays best-effort.
+            continue
 
 
 def _find_span(
