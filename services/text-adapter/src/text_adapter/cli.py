@@ -15,6 +15,7 @@ import json
 import sys
 from pathlib import Path
 
+from .epub import export_epub, import_epub
 from .exporter import export_html, export_markdown
 from .importer import import_html, import_markdown
 
@@ -25,6 +26,8 @@ def _detect_input_format(path: Path) -> str:
         return "md"
     if ext in ("html", "htm", "xhtml"):
         return "html"
+    if ext == "epub":
+        return "epub"
     raise ValueError(f"unsupported input extension: {path.suffix!r}")
 
 
@@ -34,6 +37,8 @@ def _detect_output_format(path: Path) -> str:
         return "md"
     if ext in ("html", "htm"):
         return "html"
+    if ext == "epub":
+        return "epub"
     raise ValueError(f"unsupported output extension: {path.suffix!r}")
 
 
@@ -64,14 +69,21 @@ def main(argv: list[str] | None = None) -> int:
         fmt = _detect_output_format(args.output)
         if fmt == "md":
             export_markdown(udm, args.output)
-        else:
+        elif fmt == "html":
             export_html(udm, args.output)
+        else:
+            export_epub(udm, args.output)
         size = args.output.stat().st_size
         print(f"Exported {args.output} ({size} bytes)", file=sys.stderr)
         return 0
 
     fmt = _detect_input_format(args.input)
-    udm = import_markdown(args.input) if fmt == "md" else import_html(args.input)
+    if fmt == "md":
+        udm = import_markdown(args.input)
+    elif fmt == "html":
+        udm = import_html(args.input)
+    else:
+        udm = import_epub(args.input)
 
     js = json.dumps(udm, indent=2 if args.pretty else None, ensure_ascii=False)
     if args.output:

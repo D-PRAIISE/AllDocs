@@ -27,7 +27,7 @@ const SUBPROCESS_TIMEOUT_MS = 180_000;
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // PK\3\4 (DOCX/ODT/XLSX/PPTX)
 
-type Format = "pdf" | "docx" | "md" | "html";
+type Format = "pdf" | "docx" | "md" | "html" | "epub";
 
 interface AdapterSpec {
   format: Format;
@@ -62,6 +62,12 @@ const ADAPTERS: Record<Format, AdapterSpec> = {
     pythonPathSubdir: "text-adapter/src",
     extractsAssets: false,
   },
+  epub: {
+    format: "epub",
+    module: "text_adapter.cli",
+    pythonPathSubdir: "text-adapter/src",
+    extractsAssets: false,
+  },
 };
 
 function paths() {
@@ -88,6 +94,12 @@ function detectFormat(buf: Buffer, filename: string): Format | null {
   }
   if (ext === "html" || ext === "htm" || ext === "xhtml") {
     return "html";
+  }
+  // EPUB is a zip but with a strict mimetype payload. The magic
+  // header is still ZIP — we trust the extension here; the importer
+  // validates internally.
+  if (ext === "epub" && buf.length >= 4 && buf.subarray(0, 4).equals(ZIP_MAGIC)) {
+    return "epub";
   }
   return null;
 }
@@ -126,7 +138,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   const format = detectFormat(buf, file.name);
   if (format === null) {
     return NextResponse.json(
-      { error: "Unsupported file type — supported: PDF, DOCX, MD, HTML" },
+      { error: "Unsupported file type — supported: PDF, DOCX, MD, HTML, EPUB" },
       { status: 415 }
     );
   }
