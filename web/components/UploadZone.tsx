@@ -7,7 +7,7 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
-  format: "pdf" | "docx";
+  format: "pdf" | "docx" | "md" | "html";
   ms_taken: number;
 }
 
@@ -16,8 +16,8 @@ interface UploadZoneProps {
 }
 
 const ACCEPT =
-  ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const ALLOWED_EXTS = [".pdf", ".docx"];
+  ".pdf,.docx,.md,.markdown,.html,.htm,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/markdown,text/html";
+const ALLOWED_EXTS = [".pdf", ".docx", ".md", ".markdown", ".html", ".htm"];
 
 export function UploadZone({ onUploaded }: UploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
@@ -57,7 +57,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       const file = files[0];
       const lower = file.name.toLowerCase();
       if (!ALLOWED_EXTS.some((ext) => lower.endsWith(ext))) {
-        setError("supported formats: pdf, docx");
+        setError("supported formats: pdf, docx, md, html");
         return;
       }
       void upload(file);
@@ -108,7 +108,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           <div className="font-mono text-xs uppercase tracking-wider text-muted">
             drop a file
           </div>
-          <div className="font-sans text-lg text-fg">PDF or DOCX</div>
+          <div className="font-sans text-lg text-fg">PDF · DOCX · Markdown · HTML</div>
           <div className="font-mono text-[0.65rem] text-subtle">or</div>
           <label className="btn-primary inline-flex cursor-pointer">
             choose file

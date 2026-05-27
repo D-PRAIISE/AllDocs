@@ -15,7 +15,7 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
-  format: "pdf" | "docx";
+  format: "pdf" | "docx" | "md" | "html";
   ms_taken: number;
 }
 
@@ -143,7 +143,10 @@ export function HomeClient() {
   }, [isEditing, doc, draft]);
 
   const downloadExport = useCallback(
-    async (endpoint: "/api/export" | "/api/export-docx", ext: "pdf" | "docx") => {
+    async (
+      endpoint: "/api/export" | "/api/export-docx" | "/api/export-md" | "/api/export-html",
+      ext: "pdf" | "docx" | "md" | "html"
+    ) => {
       if (!doc) return;
       setIsDownloading(true);
       setError(null);
@@ -182,6 +185,14 @@ export function HomeClient() {
   );
   const handleDownloadDocx = useCallback(
     () => downloadExport("/api/export-docx", "docx"),
+    [downloadExport]
+  );
+  const handleDownloadMd = useCallback(
+    () => downloadExport("/api/export-md", "md"),
+    [downloadExport]
+  );
+  const handleDownloadHtml = useCallback(
+    () => downloadExport("/api/export-html", "html"),
     [downloadExport]
   );
 
@@ -299,6 +310,26 @@ export function HomeClient() {
               >
                 ↓ docx
               </button>
+              {/* MD + HTML export only makes sense for flow-mode docs;
+                  the text-adapter exporters reject fixed UDM. */}
+              {doc?.mode === "flow" && (
+                <>
+                  <button
+                    onClick={handleDownloadMd}
+                    disabled={isDownloading}
+                    className="btn-ghost"
+                  >
+                    ↓ md
+                  </button>
+                  <button
+                    onClick={handleDownloadHtml}
+                    disabled={isDownloading}
+                    className="btn-ghost"
+                  >
+                    ↓ html
+                  </button>
+                </>
+              )}
             </>
           )}
 

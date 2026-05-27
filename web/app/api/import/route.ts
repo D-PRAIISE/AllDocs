@@ -27,13 +27,13 @@ const SUBPROCESS_TIMEOUT_MS = 180_000;
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // PK\3\4 (DOCX/ODT/XLSX/PPTX)
 
-type Format = "pdf" | "docx";
+type Format = "pdf" | "docx" | "md" | "html";
 
 interface AdapterSpec {
   format: Format;
   module: string;
   pythonPathSubdir: string;
-  // PDF supports asset extraction; DOCX doesn't yet (v0.2).
+  // PDF supports asset extraction; DOCX/MD/HTML don't yet.
   extractsAssets: boolean;
 }
 
@@ -48,6 +48,18 @@ const ADAPTERS: Record<Format, AdapterSpec> = {
     format: "docx",
     module: "office_adapter.cli",
     pythonPathSubdir: "office-adapter/src",
+    extractsAssets: false,
+  },
+  md: {
+    format: "md",
+    module: "text_adapter.cli",
+    pythonPathSubdir: "text-adapter/src",
+    extractsAssets: false,
+  },
+  html: {
+    format: "html",
+    module: "text_adapter.cli",
+    pythonPathSubdir: "text-adapter/src",
     extractsAssets: false,
   },
 };
@@ -70,6 +82,12 @@ function detectFormat(buf: Buffer, filename: string): Format | null {
   }
   if (ext === "docx" && buf.length >= 4 && buf.subarray(0, 4).equals(ZIP_MAGIC)) {
     return "docx";
+  }
+  if (ext === "md" || ext === "markdown" || ext === "mdown") {
+    return "md";
+  }
+  if (ext === "html" || ext === "htm" || ext === "xhtml") {
+    return "html";
   }
   return null;
 }
@@ -108,7 +126,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   const format = detectFormat(buf, file.name);
   if (format === null) {
     return NextResponse.json(
-      { error: "Unsupported file type — PDF or DOCX only (matched by extension + magic bytes)" },
+      { error: "Unsupported file type — supported: PDF, DOCX, MD, HTML" },
       { status: 415 }
     );
   }
