@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import type { Block, Document, FlowContent } from "@/lib/udm";
+import type { Block, Document, FlowContent, SheetContent } from "@/lib/udm";
 import { useHistory } from "@/lib/use-doc-history";
 import { FixedEditor } from "./FixedEditor";
 import { FlowEditor } from "./FlowEditor";
 import { ReportProblemModal } from "./ReportProblemModal";
+import { SheetEditor } from "./SheetView";
 import { DocumentSummary, FontFaceStyles, UdmViewer } from "./UdmViewer";
 import { UploadZone } from "./UploadZone";
 
@@ -15,7 +16,7 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
-  format: "pdf" | "docx" | "md" | "html" | "epub";
+  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx";
   ms_taken: number;
 }
 
@@ -149,8 +150,9 @@ export function HomeClient() {
         | "/api/export-docx"
         | "/api/export-md"
         | "/api/export-html"
-        | "/api/export-epub",
-      ext: "pdf" | "docx" | "md" | "html" | "epub"
+        | "/api/export-epub"
+        | "/api/export-xlsx",
+      ext: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx"
     ) => {
       if (!doc) return;
       setIsDownloading(true);
@@ -204,6 +206,10 @@ export function HomeClient() {
     () => downloadExport("/api/export-epub", "epub"),
     [downloadExport]
   );
+  const handleDownloadXlsx = useCallback(
+    () => downloadExport("/api/export-xlsx", "xlsx"),
+    [downloadExport]
+  );
 
   const resetToSynthetic = useCallback(() => {
     setSrc(DEFAULT_SRC);
@@ -211,8 +217,9 @@ export function HomeClient() {
     setIsEditing(false);
   }, []);
 
-  const canEdit = doc?.mode === "flow" || doc?.mode === "fixed";
-  const showDownload = doc !== null && (doc.mode === "fixed" || doc.mode === "flow");
+  const canEdit = doc?.mode === "flow" || doc?.mode === "fixed" || doc?.mode === "sheet";
+  const showDownload =
+    doc !== null && (doc.mode === "fixed" || doc.mode === "flow" || doc.mode === "sheet");
   // Only surface our top-level undo/redo for fixed mode — flow has
   // TipTap's own undo on its toolbar.
   const showHistoryControls = isEditing && doc?.mode === "fixed";
@@ -305,20 +312,24 @@ export function HomeClient() {
 
           {showDownload && !isEditing && (
             <>
-              <button
-                onClick={handleDownloadPdf}
-                disabled={isDownloading}
-                className="btn-primary"
-              >
-                {isDownloading ? "exporting…" : "↓ pdf"}
-              </button>
-              <button
-                onClick={handleDownloadDocx}
-                disabled={isDownloading}
-                className="btn-ghost"
-              >
-                ↓ docx
-              </button>
+              {(doc?.mode === "fixed" || doc?.mode === "flow") && (
+                <>
+                  <button
+                    onClick={handleDownloadPdf}
+                    disabled={isDownloading}
+                    className="btn-primary"
+                  >
+                    {isDownloading ? "exporting…" : "↓ pdf"}
+                  </button>
+                  <button
+                    onClick={handleDownloadDocx}
+                    disabled={isDownloading}
+                    className="btn-ghost"
+                  >
+                    ↓ docx
+                  </button>
+                </>
+              )}
               {/* MD / HTML / EPUB exports only apply to flow mode;
                   the text-adapter exporters reject fixed UDM. */}
               {doc?.mode === "flow" && (
@@ -345,6 +356,15 @@ export function HomeClient() {
                     ↓ epub
                   </button>
                 </>
+              )}
+              {doc?.mode === "sheet" && (
+                <button
+                  onClick={handleDownloadXlsx}
+                  disabled={isDownloading}
+                  className="btn-primary"
+                >
+                  {isDownloading ? "exporting…" : "↓ xlsx"}
+                </button>
               )}
             </>
           )}
@@ -387,6 +407,16 @@ export function HomeClient() {
             <FontFaceStyles resources={draft.state.resources} />
             <DocumentSummary doc={draft.state} />
             <FixedEditor doc={draft.state} onChange={handleEditedDoc} />
+          </div>
+        ) : isEditing && doc.mode === "sheet" ? (
+          <div className="space-y-4">
+            <DocumentSummary doc={draft.state} />
+            <SheetEditor
+              content={draft.state.content as SheetContent}
+              onChange={(content) =>
+                handleEditedDoc({ ...draft.state, content } as Document)
+              }
+            />
           </div>
         ) : (
           <UdmViewer doc={doc} />

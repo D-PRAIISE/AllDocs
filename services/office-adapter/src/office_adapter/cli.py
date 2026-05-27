@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .exporter import export_docx_from_file
 from .importer import import_docx
+from .xlsx import export_xlsx, import_xlsx
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,16 +62,32 @@ def main(argv: list[str] | None = None) -> int:
         if not args.output:
             print("error: --export requires -o OUTPUT", file=sys.stderr)
             return 2
-        export_docx_from_file(args.input, args.output, base_dir=args.base_dir)
+        out_ext = args.output.suffix.lower()
+        if out_ext == ".xlsx":
+            udm = json.loads(args.input.read_text(encoding="utf-8"))
+            export_xlsx(udm, args.output)
+        else:
+            export_docx_from_file(args.input, args.output, base_dir=args.base_dir)
         print(
             f"Exported {args.output} ({args.output.stat().st_size} bytes)",
             file=sys.stderr,
         )
         return 0
 
-    udm = import_docx(args.input)
+    in_ext = args.input.suffix.lower()
+    if in_ext == ".xlsx":
+        udm = import_xlsx(args.input)
+    else:
+        udm = import_docx(args.input)
 
     if args.summary:
+        if udm.get("mode") == "sheet":
+            sheets = udm["content"]["sheets"]
+            total_cells = sum(len(s.get("cells") or {}) for s in sheets)
+            print(
+                f"{args.input.name}: {len(sheets)} sheet(s), {total_cells} cell(s)"
+            )
+            return 0
         blocks = udm["content"]["blocks"]
         counts: dict[str, int] = {}
         for b in blocks:

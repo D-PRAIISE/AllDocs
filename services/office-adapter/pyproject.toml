@@ -11,6 +11,8 @@ dependencies = [
     # passthrough source PDF is reachable; the linear fixed_to_flow
     # heuristic is the fallback when it isn't.
     "pdf2docx>=0.5.6",
+    # XLSX read/write.
+    "openpyxl>=3.1",
 ]
 
 [project.scripts]

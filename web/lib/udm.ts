@@ -330,11 +330,59 @@ export type Mark =
   | { type: "font"; font_id: string }
   | { type: "size"; size: Length };
 
-// ----- Other modes (stubbed for v0.1 viewer) -----
+// ----- Sheet mode (XLSX / ODS / CSV) -----
 
 export interface SheetContent {
-  sheets: unknown[];
+  sheets: Sheet[];
+  named_ranges?: NamedRange[];
+  defined_names?: DefinedName[];
 }
+
+export interface Sheet {
+  name: string;
+  cells?: Record<string, Cell>; // sparse A1-address map
+  row_heights?: Record<string, Length>;
+  column_widths?: Record<string, Length>;
+  merges?: CellRange[];
+  hidden?: boolean;
+}
+
+export interface Cell {
+  value: CellValue;
+  formula?: string;
+  display?: string;
+  format?: string;
+  style_id?: string;
+  comment?: { author: string; text: string };
+  hyperlink?: string;
+}
+
+export type CellValue =
+  | { kind: "number"; value: number }
+  | { kind: "string"; value: string }
+  | { kind: "boolean"; value: boolean }
+  | { kind: "date"; value: string }
+  | { kind: "error"; code: string }
+  | { kind: "empty" };
+
+export interface CellRange {
+  start: string;
+  end: string;
+}
+
+export interface NamedRange {
+  name: string;
+  range: CellRange;
+  sheet_name?: string;
+}
+
+export interface DefinedName {
+  name: string;
+  expression: string;
+  scope?: string;
+}
+
+// ----- Other modes (stubbed for v0.1 viewer) -----
 export interface SlidesContent {
   slides: unknown[];
 }

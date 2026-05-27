@@ -7,10 +7,12 @@ import {
   type FixedContent,
   type FlowContent,
   type Resources,
+  type SheetContent,
   lengthToPx,
 } from "@/lib/udm";
 import { FixedPageView } from "./FixedPageView";
 import { FlowContentView } from "./FlowContentView";
+import { SheetView } from "./SheetView";
 import { ZoomControl } from "./ZoomControl";
 
 interface UdmViewerProps {
@@ -146,10 +148,15 @@ function ContentRenderer({
     return <FlowContentView blocks={flow.blocks} resources={doc.resources} />;
   }
 
+  if (doc.mode === "sheet") {
+    const sheet = doc.content as SheetContent;
+    return <SheetView content={sheet} />;
+  }
+
   return (
     <div className="border border-border bg-surface px-4 py-6 font-mono text-xs text-muted">
       mode <span className="text-accent">{doc.mode}</span> not yet supported
-      (v0.1 renders fixed and flow only).
+      (v0.1 renders fixed, flow, and sheet).
     </div>
   );
 }
