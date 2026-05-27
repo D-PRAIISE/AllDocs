@@ -6,6 +6,7 @@ import type { Block, Document, FlowContent } from "@/lib/udm";
 import { useHistory } from "@/lib/use-doc-history";
 import { FixedEditor } from "./FixedEditor";
 import { FlowEditor } from "./FlowEditor";
+import { ReportProblemModal } from "./ReportProblemModal";
 import { DocumentSummary, FontFaceStyles, UdmViewer } from "./UdmViewer";
 import { UploadZone } from "./UploadZone";
 
@@ -38,6 +39,7 @@ export function HomeClient() {
   const [isEditing, setIsEditing] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -299,6 +301,19 @@ export function HomeClient() {
               </button>
             </>
           )}
+
+          {/* Report-a-problem is available the moment a doc is loaded,
+              including mid-edit — the user might be reporting something
+              that's broken right now in their editor state. */}
+          {doc !== null && (
+            <button
+              onClick={() => setReportOpen(true)}
+              className="ml-auto font-mono text-[0.65rem] uppercase tracking-wider text-subtle hover:text-muted underline-offset-4 hover:underline"
+              title="Report a problem with this document"
+            >
+              ⚐ report a problem
+            </button>
+          )}
         </div>
       </div>
 
@@ -330,6 +345,17 @@ export function HomeClient() {
           <UdmViewer doc={doc} />
         )
       )}
+
+      <ReportProblemModal
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+        doc={isEditing ? draft.state : doc}
+        sourceUrl={
+          meta ? `/uploads/${meta.session_id}/source.${meta.format}` : null
+        }
+        sourceFilename={meta?.filename ?? null}
+        sessionId={meta?.session_id ?? null}
+      />
     </div>
   );
 }
