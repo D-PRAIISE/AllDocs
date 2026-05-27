@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .exporter import export_docx_from_file
 from .importer import import_docx
+from .pptx_adapter import export_pptx, import_pptx
 from .xlsx import export_xlsx, import_xlsx
 
 
@@ -66,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
         if out_ext == ".xlsx":
             udm = json.loads(args.input.read_text(encoding="utf-8"))
             export_xlsx(udm, args.output)
+        elif out_ext == ".pptx":
+            udm = json.loads(args.input.read_text(encoding="utf-8"))
+            export_pptx(udm, args.output)
         else:
             export_docx_from_file(args.input, args.output, base_dir=args.base_dir)
         print(
@@ -77,6 +81,8 @@ def main(argv: list[str] | None = None) -> int:
     in_ext = args.input.suffix.lower()
     if in_ext == ".xlsx":
         udm = import_xlsx(args.input)
+    elif in_ext == ".pptx":
+        udm = import_pptx(args.input)
     else:
         udm = import_docx(args.input)
 
@@ -86,6 +92,13 @@ def main(argv: list[str] | None = None) -> int:
             total_cells = sum(len(s.get("cells") or {}) for s in sheets)
             print(
                 f"{args.input.name}: {len(sheets)} sheet(s), {total_cells} cell(s)"
+            )
+            return 0
+        if udm.get("mode") == "slides":
+            slides = udm["content"]["slides"]
+            total_shapes = sum(len(s.get("shapes") or []) for s in slides)
+            print(
+                f"{args.input.name}: {len(slides)} slide(s), {total_shapes} shape(s)"
             )
             return 0
         blocks = udm["content"]["blocks"]

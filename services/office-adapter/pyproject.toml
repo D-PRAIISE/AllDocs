@@ -13,6 +13,8 @@ dependencies = [
     "pdf2docx>=0.5.6",
     # XLSX read/write.
     "openpyxl>=3.1",
+    # PPTX read/write.
+    "python-pptx>=1.0",
 ]
 
 [project.scripts]

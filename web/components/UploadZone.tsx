@@ -7,7 +7,7 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
-  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx";
+  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx";
   ms_taken: number;
 }
 
@@ -16,8 +16,18 @@ interface UploadZoneProps {
 }
 
 const ACCEPT =
-  ".pdf,.docx,.xlsx,.md,.markdown,.html,.htm,.epub,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/markdown,text/html,application/epub+zip";
-const ALLOWED_EXTS = [".pdf", ".docx", ".xlsx", ".md", ".markdown", ".html", ".htm", ".epub"];
+  ".pdf,.docx,.xlsx,.pptx,.md,.markdown,.html,.htm,.epub,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/markdown,text/html,application/epub+zip";
+const ALLOWED_EXTS = [
+  ".pdf",
+  ".docx",
+  ".xlsx",
+  ".pptx",
+  ".md",
+  ".markdown",
+  ".html",
+  ".htm",
+  ".epub",
+];
 
 export function UploadZone({ onUploaded }: UploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
@@ -57,7 +67,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       const file = files[0];
       const lower = file.name.toLowerCase();
       if (!ALLOWED_EXTS.some((ext) => lower.endsWith(ext))) {
-        setError("supported formats: pdf, docx, xlsx, md, html, epub");
+        setError("supported formats: pdf, docx, xlsx, pptx, md, html, epub");
         return;
       }
       void upload(file);
@@ -108,7 +118,9 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           <div className="font-mono text-xs uppercase tracking-wider text-muted">
             drop a file
           </div>
-          <div className="font-sans text-lg text-fg">PDF · DOCX · XLSX · Markdown · HTML · EPUB</div>
+          <div className="font-sans text-lg text-fg">
+            PDF · DOCX · XLSX · PPTX · Markdown · HTML · EPUB
+          </div>
           <div className="font-mono text-[0.65rem] text-subtle">or</div>
           <label className="btn-primary inline-flex cursor-pointer">
             choose file

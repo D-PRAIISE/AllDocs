@@ -2,12 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import type { Block, Document, FlowContent, SheetContent } from "@/lib/udm";
+import type { Block, Document, FlowContent, SheetContent, SlidesContent } from "@/lib/udm";
 import { useHistory } from "@/lib/use-doc-history";
 import { FixedEditor } from "./FixedEditor";
 import { FlowEditor } from "./FlowEditor";
 import { ReportProblemModal } from "./ReportProblemModal";
 import { SheetEditor } from "./SheetView";
+import { SlideEditor } from "./SlideView";
 import { DocumentSummary, FontFaceStyles, UdmViewer } from "./UdmViewer";
 import { UploadZone } from "./UploadZone";
 
@@ -16,7 +17,7 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
-  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx";
+  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx";
   ms_taken: number;
 }
 
@@ -151,8 +152,9 @@ export function HomeClient() {
         | "/api/export-md"
         | "/api/export-html"
         | "/api/export-epub"
-        | "/api/export-xlsx",
-      ext: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx"
+        | "/api/export-xlsx"
+        | "/api/export-pptx",
+      ext: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx"
     ) => {
       if (!doc) return;
       setIsDownloading(true);
@@ -210,6 +212,10 @@ export function HomeClient() {
     () => downloadExport("/api/export-xlsx", "xlsx"),
     [downloadExport]
   );
+  const handleDownloadPptx = useCallback(
+    () => downloadExport("/api/export-pptx", "pptx"),
+    [downloadExport]
+  );
 
   const resetToSynthetic = useCallback(() => {
     setSrc(DEFAULT_SRC);
@@ -217,9 +223,17 @@ export function HomeClient() {
     setIsEditing(false);
   }, []);
 
-  const canEdit = doc?.mode === "flow" || doc?.mode === "fixed" || doc?.mode === "sheet";
+  const canEdit =
+    doc?.mode === "flow" ||
+    doc?.mode === "fixed" ||
+    doc?.mode === "sheet" ||
+    doc?.mode === "slides";
   const showDownload =
-    doc !== null && (doc.mode === "fixed" || doc.mode === "flow" || doc.mode === "sheet");
+    doc !== null &&
+    (doc.mode === "fixed" ||
+      doc.mode === "flow" ||
+      doc.mode === "sheet" ||
+      doc.mode === "slides");
   // Only surface our top-level undo/redo for fixed mode — flow has
   // TipTap's own undo on its toolbar.
   const showHistoryControls = isEditing && doc?.mode === "fixed";
@@ -366,6 +380,15 @@ export function HomeClient() {
                   {isDownloading ? "exporting…" : "↓ xlsx"}
                 </button>
               )}
+              {doc?.mode === "slides" && (
+                <button
+                  onClick={handleDownloadPptx}
+                  disabled={isDownloading}
+                  className="btn-primary"
+                >
+                  {isDownloading ? "exporting…" : "↓ pptx"}
+                </button>
+              )}
             </>
           )}
 
@@ -413,6 +436,17 @@ export function HomeClient() {
             <DocumentSummary doc={draft.state} />
             <SheetEditor
               content={draft.state.content as SheetContent}
+              onChange={(content) =>
+                handleEditedDoc({ ...draft.state, content } as Document)
+              }
+            />
+          </div>
+        ) : isEditing && doc.mode === "slides" ? (
+          <div className="space-y-4">
+            <DocumentSummary doc={draft.state} />
+            <SlideEditor
+              content={draft.state.content as SlidesContent}
+              resources={draft.state.resources}
               onChange={(content) =>
                 handleEditedDoc({ ...draft.state, content } as Document)
               }

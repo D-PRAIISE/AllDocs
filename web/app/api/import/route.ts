@@ -27,7 +27,7 @@ const SUBPROCESS_TIMEOUT_MS = 180_000;
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // PK\3\4 (DOCX/ODT/XLSX/PPTX)
 
-type Format = "pdf" | "docx" | "md" | "html" | "epub" | "xlsx";
+type Format = "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx";
 
 interface AdapterSpec {
   format: Format;
@@ -74,6 +74,12 @@ const ADAPTERS: Record<Format, AdapterSpec> = {
     pythonPathSubdir: "office-adapter/src",
     extractsAssets: false,
   },
+  pptx: {
+    format: "pptx",
+    module: "office_adapter.cli",
+    pythonPathSubdir: "office-adapter/src",
+    extractsAssets: false,
+  },
 };
 
 function paths() {
@@ -110,6 +116,9 @@ function detectFormat(buf: Buffer, filename: string): Format | null {
   // XLSX is also a zip; openpyxl validates the inner structure.
   if (ext === "xlsx" && buf.length >= 4 && buf.subarray(0, 4).equals(ZIP_MAGIC)) {
     return "xlsx";
+  }
+  if (ext === "pptx" && buf.length >= 4 && buf.subarray(0, 4).equals(ZIP_MAGIC)) {
+    return "pptx";
   }
   return null;
 }
@@ -148,7 +157,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   const format = detectFormat(buf, file.name);
   if (format === null) {
     return NextResponse.json(
-      { error: "Unsupported file type — supported: PDF, DOCX, XLSX, MD, HTML, EPUB" },
+      { error: "Unsupported file type — supported: PDF, DOCX, XLSX, PPTX, MD, HTML, EPUB" },
       { status: 415 }
     );
   }

@@ -382,10 +382,33 @@ export interface DefinedName {
   scope?: string;
 }
 
-// ----- Other modes (stubbed for v0.1 viewer) -----
+// ----- Slides mode (PPTX / ODP / Keynote) -----
+
 export interface SlidesContent {
-  slides: unknown[];
+  slides: Slide[];
+  masters?: unknown[];
+  layouts?: unknown[];
+  theme?: unknown;
 }
+
+export interface Slide {
+  id: string;
+  layout_id: string;
+  number: number;
+  width: Length;
+  height: Length;
+  shapes: SlideShape[];
+  notes?: FlowContent;
+  hidden?: boolean;
+}
+
+export interface SlideShape {
+  layer: Layer;
+  placeholder?: string;
+  name?: string;
+}
+
+// ----- Other modes (stubbed for v0.1 viewer) -----
 export interface HybridContent {
   primary: Mode;
   layers: { flow?: FlowContent; fixed?: FixedContent; sheet?: SheetContent; slides?: SlidesContent };
