@@ -319,6 +319,21 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   // layers (added images only for now). Resize handles render only when
   // exactly one is selected; Delete + arrow nudge act on the whole set.
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+
+  // In-session image library — extracted images the user wants to
+  // reuse mid-edit. Cleared on save/discard with the rest of the
+  // editor state. Each item carries its own data URL so it survives
+  // any page-content edits / deletes.
+  interface LibraryItem {
+    id: string;
+    dataUrl: string;
+    width: number;
+    height: number;
+    format: string;
+    label: string;
+  }
+  const [library, setLibrary] = useState<LibraryItem[]>([]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   const selectionKey = (p: number, l: number) => `${p}:${l}`;
   const toggleSelected = useCallback((p: number, l: number, additive: boolean) => {
     setSelected((prev) => {
@@ -618,6 +633,91 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     },
     [doc, onChange]
   );
+
+  // Extract the currently single-selected image into the library so
+  // the user can reuse it later in this editing session. Non-destructive:
+  // the source layer stays on the page.
+  const extractSelectedToLibrary = useCallback(async () => {
+    if (selected.size !== 1) return;
+    const onlyKey = [...selected][0];
+    const [p, l] = onlyKey.split(":").map(Number);
+    const content = doc.content as FixedContent;
+    const layer = content.pages[p]?.layers[l];
+    if (!layer || layer.type !== "image") return;
+    const resource = doc.resources.images.find((i) => i.id === layer.image_id);
+    if (!resource) return;
+    let dataUrl = resource.data_ref ?? "";
+    // For images that live on disk (uploaded PDFs), fetch their bytes
+    // and convert to a data URL so the library item is self-contained.
+    if (dataUrl && !dataUrl.startsWith("data:") && !dataUrl.startsWith("xref:")) {
+      try {
+        const blob = await (await fetch(dataUrl)).blob();
+        dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(blob);
+        });
+      } catch {
+        return;
+      }
+    }
+    if (!dataUrl.startsWith("data:")) return;
+    setLibrary((prev) => [
+      ...prev,
+      {
+        id: `lib_${Date.now()}_${prev.length}`,
+        dataUrl,
+        width: resource.width ?? 0,
+        height: resource.height ?? 0,
+        format: resource.format ?? "png",
+        label: `image #${prev.length + 1}`,
+      },
+    ]);
+    setLibraryOpen(true);
+  }, [doc, selected]);
+
+  // Place a library item onto the given page at a sensible position.
+  const placeLibraryItem = useCallback(
+    (item: LibraryItem, pageIdx: number) => {
+      const next = structuredClone(doc) as Document;
+      const page = (next.content as FixedContent).pages[pageIdx];
+      if (!page) return;
+      const dispW = 160;
+      const dispH = item.width > 0 ? (dispW * item.height) / item.width : dispW;
+      const imgId = `img_lib_${next.resources.images.length}_${Date.now()}`;
+      next.resources.images.push({
+        id: imgId,
+        format: item.format as "png" | "jpeg" | "webp",
+        width: item.width,
+        height: item.height,
+        data_ref: item.dataUrl,
+      });
+      page.layers.push({
+        type: "image",
+        image_id: imgId,
+        x: { value: 72, unit: "pt" },
+        y: { value: 72, unit: "pt" },
+        width: { value: dispW, unit: "pt" },
+        height: { value: dispH, unit: "pt" },
+      });
+      onChange(next);
+    },
+    [doc, onChange]
+  );
+
+  const downloadLibraryItem = useCallback((item: LibraryItem) => {
+    const a = document.createElement("a");
+    a.href = item.dataUrl;
+    a.download = `${item.label.replace(/\s+/g, "_")}.${item.format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }, []);
+
+  const removeLibraryItem = useCallback((id: string) => {
+    setLibrary((prev) => prev.filter((it) => it.id !== id));
+  }, []);
 
   const replaceImage = useCallback(
     async (imageId: string) => {
@@ -1191,8 +1291,33 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         autoDetectedCount={autoDetectedCount}
         showAutoDetected={showAutoDetected}
         onToggleAutoDetected={() => setShowAutoDetected((v) => !v)}
+        canExtractToLibrary={(() => {
+          if (selected.size !== 1) return false;
+          const onlyKey = [...selected][0];
+          const [p, l] = onlyKey.split(":").map(Number);
+          const layer = fixed.pages[p]?.layers[l];
+          return layer?.type === "image";
+        })()}
+        onExtractToLibrary={extractSelectedToLibrary}
+        libraryCount={library.length}
+        libraryOpen={libraryOpen}
+        onToggleLibrary={() => setLibraryOpen((v) => !v)}
       />
       <PageOpsPanel doc={doc} onChange={onChange} />
+      {libraryOpen && library.length > 0 ? (
+        <ImageLibraryPanel
+          items={library}
+          onPlace={(item) => {
+            // Place on the highest-numbered page that's visible in the
+            // editor's scroll viewport. Simpler: just page 0 for now;
+            // the placed image is draggable.
+            placeLibraryItem(item, 0);
+          }}
+          onDownload={downloadLibraryItem}
+          onRemove={removeLibraryItem}
+          onClose={() => setLibraryOpen(false)}
+        />
+      ) : null}
       {compactOffer ? (
         <div className="border border-accent/40 bg-accent/10 px-3 py-2 flex items-center gap-3 flex-wrap">
           <span className="label">
@@ -1326,6 +1451,98 @@ interface EditingState {
   layerIdx: number;
   runIdx: number;
   initialText: string;
+}
+
+/** In-session extracted-images workspace.
+ *
+ * Users right-click / button-extract any image into here for later
+ * reuse. Each entry can be placed back onto the document or
+ * downloaded as a file. Cleared on save / discard with the rest of
+ * the editor state. */
+function ImageLibraryPanel({
+  items,
+  onPlace,
+  onDownload,
+  onRemove,
+  onClose,
+}: {
+  items: Array<{
+    id: string;
+    dataUrl: string;
+    width: number;
+    height: number;
+    format: string;
+    label: string;
+  }>;
+  onPlace: (item: { id: string; dataUrl: string; width: number; height: number; format: string; label: string }) => void;
+  onDownload: (item: { id: string; dataUrl: string; width: number; height: number; format: string; label: string }) => void;
+  onRemove: (id: string) => void;
+  onClose: () => void;
+}) {
+  const btn =
+    "font-mono text-[0.65rem] uppercase tracking-wider px-1.5 py-0.5 border border-border text-muted hover:text-fg hover:border-fg";
+  return (
+    <div className="border border-border bg-surface px-3 py-2">
+      <div className="flex items-center justify-between mb-2">
+        <span className="label">library · {items.length}</span>
+        <button
+          className={btn}
+          onClick={onClose}
+          aria-label="Close library panel"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-3">
+        {items.map((item) => (
+          <div
+            key={item.id}
+            className="border border-border bg-bg p-2 flex flex-col gap-1.5"
+            style={{ width: 140 }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={item.dataUrl}
+              alt={item.label}
+              className="w-full border border-border"
+              style={{ height: 90, objectFit: "contain", background: "#fff" }}
+            />
+            <div
+              className="font-mono text-[0.6rem] text-subtle truncate"
+              title={`${item.width}×${item.height} ${item.format}`}
+            >
+              {item.width}×{item.height}
+            </div>
+            <div className="flex gap-1">
+              <button
+                className={btn + " flex-1"}
+                onClick={() => onPlace(item)}
+                title="Place on page 1"
+              >
+                ↘ place
+              </button>
+              <button
+                className={btn}
+                onClick={() => onDownload(item)}
+                aria-label="Download image"
+                title="Download"
+              >
+                ↓
+              </button>
+              <button
+                className={btn}
+                onClick={() => onRemove(item.id)}
+                aria-label="Remove from library"
+                title="Remove"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 /** Compact in-editor search bar. Renders above the page container; the
@@ -2941,6 +3158,11 @@ function EditorHeader({
   autoDetectedCount,
   showAutoDetected,
   onToggleAutoDetected,
+  canExtractToLibrary,
+  onExtractToLibrary,
+  libraryCount,
+  libraryOpen,
+  onToggleLibrary,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
@@ -2951,6 +3173,11 @@ function EditorHeader({
   autoDetectedCount: number;
   showAutoDetected: boolean;
   onToggleAutoDetected: () => void;
+  canExtractToLibrary: boolean;
+  onExtractToLibrary: () => void;
+  libraryCount: number;
+  libraryOpen: boolean;
+  onToggleLibrary: () => void;
 }) {
   const modeBtn = (active: boolean) =>
     `font-mono text-xs px-2 py-1 border transition-colors ${
@@ -2991,6 +3218,24 @@ function EditorHeader({
         ))}
       </div>
       <div className="flex items-center gap-3">
+        {canExtractToLibrary ? (
+          <button
+            onClick={onExtractToLibrary}
+            className={modeBtn(false)}
+            title="Extract the selected image into the session library for reuse"
+          >
+            ↥ library
+          </button>
+        ) : null}
+        {libraryCount > 0 ? (
+          <button
+            onClick={onToggleLibrary}
+            className={modeBtn(libraryOpen)}
+            title="Toggle the session image library"
+          >
+            {libraryOpen ? "▼" : "▶"} library ({libraryCount})
+          </button>
+        ) : null}
         {autoDetectedCount > 0 ? (
           <button
             onClick={onToggleAutoDetected}
