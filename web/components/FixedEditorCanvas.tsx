@@ -200,13 +200,11 @@ function loadImageEl(src: string): Promise<HTMLImageElement> {
  * frames part of a (possibly page-sized) image and only that area is
  * swapped — the rest of the image is preserved.
  *
- * Crop strategy (lesson #6): when the overlay's aspect doesn't match
- * the target region, crop the overlay (not the region) to preserve
- * pixel fidelity. For portrait overlays (taller than wide) we bias
- * the vertical crop toward the top so heads stay in frame; for other
- * aspect mismatches we center-crop. A future enhancement is true
- * face-aware bias via face-api.js / MediaPipe, lazy-loaded only on
- * image-replace use.
+ * Crop strategy (lesson #6): face-aware. computeFaceAwareCrop lazy-
+ * loads the face-api.js tiny detector model (~190KB, served from
+ * /face-models) to find the largest face in the overlay and biases
+ * the crop window to keep it in frame. Falls back to portrait-top-
+ * bias when no face is detected or model load fails.
  */
 async function compositeImageIntoRegion(
   baseUrl: string,
@@ -224,34 +222,8 @@ async function compositeImageIntoRegion(
   ctx.drawImage(base, 0, 0, baseW, baseH);
   const overlay = await loadImageEl(overlayUrl);
 
-  const oW = overlay.naturalWidth || overlay.width;
-  const oH = overlay.naturalHeight || overlay.height;
-  const rAspect = region.w / region.h;
-  const oAspect = oW / oH;
-
-  // Source rect on the overlay — the portion we'll actually paint.
-  let sx = 0;
-  let sy = 0;
-  let sw = oW;
-  let sh = oH;
-
-  // Tolerance: don't bother cropping when aspects are within 2%.
-  if (Math.abs(oAspect - rAspect) > 0.02) {
-    if (oAspect > rAspect) {
-      // Overlay is wider than the region — crop left + right. Center
-      // horizontally; faces in non-portrait shots are typically centred.
-      sw = oH * rAspect;
-      sx = (oW - sw) / 2;
-    } else {
-      // Overlay is taller than the region — crop top + bottom. For
-      // portraits (oAspect < 0.85) bias the crop window upward so the
-      // head stays in frame; otherwise centre.
-      sh = oW / rAspect;
-      const isPortrait = oAspect < 0.85;
-      const verticalBias = isPortrait ? 0.15 : 0.5;
-      sy = (oH - sh) * verticalBias;
-    }
-  }
+  const { computeFaceAwareCrop } = await import("@/lib/face-crop");
+  const { sx, sy, sw, sh } = await computeFaceAwareCrop(overlay, region.w / region.h);
 
   ctx.drawImage(overlay, sx, sy, sw, sh, region.x, region.y, region.w, region.h);
   return canvas.toDataURL("image/png");

@@ -36,7 +36,15 @@ const themeBootstrap = `
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable}`}>
+    // suppressHydrationWarning: the themeBootstrap script below stamps
+    // data-theme onto <html> BEFORE React hydrates, which by design
+    // makes the client-rendered DOM differ from the server HTML on
+    // this single attribute. Standard pattern; the warning is noise.
+    <html
+      lang="en"
+      className={`${sans.variable} ${mono.variable}`}
+      suppressHydrationWarning
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
       </head>

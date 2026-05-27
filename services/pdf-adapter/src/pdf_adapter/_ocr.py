@@ -84,6 +84,52 @@ def tesseract_available() -> bool:
     return _locate_tesseract() is not None
 
 
+_MERGED_TESSDATA_DIR: str | None = None
+
+
+def _ensure_merged_tessdata(sys_tessdata: Path, user_tessdata: Path) -> str:
+    """Build (once per process) a single tessdata dir that contains the
+    system English / OSD data PLUS any user-installed language packs
+    in ``ALLDOCS_TESSDATA``. Returns its absolute path.
+
+    Tesseract resolves languages from a single TESSDATA_PREFIX dir,
+    so we merge them by symlinking (or copying as fallback) every
+    .traineddata file from both source dirs into a per-process scratch
+    directory. Symlinks are cheap and don't duplicate the ~10MB packs.
+    """
+    global _MERGED_TESSDATA_DIR
+    if _MERGED_TESSDATA_DIR is not None:
+        return _MERGED_TESSDATA_DIR
+    import tempfile
+
+    merged = Path(tempfile.gettempdir()) / "alldocs-tessdata"
+    merged.mkdir(parents=True, exist_ok=True)
+
+    def _link(src: Path, dst: Path) -> None:
+        if dst.exists():
+            return
+        try:
+            os.symlink(src, dst)
+        except (OSError, NotImplementedError):
+            # Symlink may require admin on Windows; fall back to copy.
+            try:
+                import shutil
+
+                shutil.copyfile(src, dst)
+            except Exception:
+                pass
+
+    for source in (sys_tessdata, user_tessdata):
+        if not source.is_dir():
+            continue
+        for f in source.iterdir():
+            if f.suffix == ".traineddata":
+                _link(f, merged / f.name)
+
+    _MERGED_TESSDATA_DIR = str(merged)
+    return _MERGED_TESSDATA_DIR
+
+
 def _locate_tesseract() -> str | None:
     """Find the tesseract executable. PATH first, then the standard
     Windows (UB-Mannheim) install location."""
@@ -153,13 +199,22 @@ def ocr_page(
 
     pytesseract.pytesseract.tesseract_cmd = tess
 
-    # When the importer runs as a subprocess (the web /api/import route),
-    # TESSDATA_PREFIX usually isn't inherited. Point it at the tessdata
-    # dir next to the binary so language data is always found.
-    if "TESSDATA_PREFIX" not in os.environ:
-        tessdata = Path(tess).parent / "tessdata"
-        if tessdata.is_dir():
-            os.environ["TESSDATA_PREFIX"] = str(tessdata)
+    # tessdata resolution. Default: the tessdata dir next to the
+    # Tesseract binary (ships with eng + osd). For non-English OCR the
+    # user can drop .traineddata files alongside that dir (admin
+    # required on Windows / Program Files) OR set ALLDOCS_TESSDATA to
+    # a user-writable directory containing the extra packs. We honour
+    # the env var by merging both dirs into a single fallback dir
+    # consulted by Tesseract via TESSDATA_PREFIX. eng + osd are always
+    # available because we symlink/copy them from the system dir.
+    sys_tessdata = Path(tess).parent / "tessdata"
+    user_tessdata = os.environ.get("ALLDOCS_TESSDATA")
+    if user_tessdata:
+        os.environ["TESSDATA_PREFIX"] = _ensure_merged_tessdata(
+            sys_tessdata, Path(user_tessdata)
+        )
+    elif "TESSDATA_PREFIX" not in os.environ and sys_tessdata.is_dir():
+        os.environ["TESSDATA_PREFIX"] = str(sys_tessdata)
 
     pix = page.get_pixmap(dpi=dpi)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)

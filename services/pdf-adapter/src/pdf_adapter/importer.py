@@ -667,33 +667,21 @@ def _shape_layers_from_drawings(page: pymupdf.Page) -> list[dict[str, Any]]:
     except Exception:
         return out
 
-    # For shapes drawn with gradient / pattern fills, PyMuPDF's
-    # get_drawings returns fill=None even when the drawing TYPE is a
-    # fill op ('f', 'fs'). Without intervention these shapes vanish on
-    # import. The proper fix needs a deeper PDF parser (pikepdf or
-    # pdfminer) to read /Shading / /Pattern dicts. As a practical
-    # fallback, sample the rendered page at the shape's bbox center to
-    # get an approximate solid color. Layers are marked
-    # _meta.gradient_fallback = True so future code can refine.
-    _gradient_sampler: _GradientFallback | None = None
-
+    # KNOWN LIMITATION (lesson #12 gradients): pure shading-pattern
+    # fills (DeviceN /Pattern / Shading) don't appear in get_drawings()
+    # at all — they show up only in get_bboxlog() as 'fill-shade' with
+    # an Int32-range "all space" bbox. Properly capturing them needs
+    # a clip-stack-aware content-stream interpreter that resolves the
+    # `sh` operator under the current clip. That's its own focused
+    # stretch; for now these shapes are lost on import (passthrough +
+    # patch paths preserve them in the source PDF, so users only see
+    # the gap on the rare full-rerender path). A non-fix because no
+    # half-measure available with PyMuPDF alone yields correct results.
     for d in drawings:
         fill = d.get("fill")
         stroke = d.get("color")
-        d_type = d.get("type") or ""
-        # PyMuPDF type chars: 'f' fill, 's' stroke, 'fs' both, 'b'/'B'
-        # close+fill+stroke variants. If a fill op was actually emitted
-        # but the resolved fill color is None, that's the gradient/
-        # pattern case.
-        is_pattern_fill = fill is None and "f" in d_type and stroke is None
-        if fill is None and stroke is None and not is_pattern_fill:
+        if fill is None and stroke is None:
             continue
-        if is_pattern_fill:
-            if _gradient_sampler is None:
-                _gradient_sampler = _GradientFallback(page)
-            sampled = _gradient_sampler.sample(d.get("rect"))
-            if sampled is not None:
-                fill = sampled
         items = d.get("items") or []
 
         # Fast path: a single rect item with no other geometry. Keep as
@@ -798,12 +786,6 @@ def _attach_shape_paint(
             "kind": "solid",
             "color": {"literal": _color_tuple_to_value(fill)},
         }
-    # Mark layers whose fill was substituted from a rendered-pixel
-    # sample (gradient / pattern path) so downstream tools know the
-    # color is approximate, not authoritative.
-    d_type = drawing.get("type") or ""
-    if "f" in d_type and drawing.get("fill") is None and fill is not None:
-        layer.setdefault("_meta", {})["gradient_fallback"] = True
     stroke_width = float(drawing.get("width") or 0)
     if stroke is not None and stroke_width > 0:
         layer["stroke"] = {
@@ -841,47 +823,6 @@ def _color_int_to_value(color_int: int) -> dict[str, Any]:
         "g": (color_int >> 8) & 0xFF,
         "b": color_int & 0xFF,
     }
-
-
-class _GradientFallback:
-    """Render the page once at low DPI and sample center-of-bbox pixels
-    so shapes with gradient/pattern fills (which PyMuPDF reports as
-    fill=None) get an approximate solid colour instead of vanishing.
-
-    Real gradient/pattern preservation requires a deeper PDF parser
-    (pikepdf, pdfminer) reading the page's /Shading / /Pattern dicts —
-    out of scope for the v0.1 PyMuPDF-only adapter.
-    """
-
-    DPI = 72  # 1pt = 1px → makes coordinate mapping trivial
-
-    def __init__(self, page: pymupdf.Page) -> None:
-        try:
-            self._pix = page.get_pixmap(dpi=self.DPI)
-            self._w = self._pix.width
-            self._h = self._pix.height
-        except Exception:
-            self._pix = None
-            self._w = 0
-            self._h = 0
-
-    def sample(self, rect: Any) -> tuple[float, float, float] | None:
-        if self._pix is None or not rect:
-            return None
-        try:
-            cx = int(round((float(rect.x0) + float(rect.x1)) / 2.0))
-            cy = int(round((float(rect.y0) + float(rect.y1)) / 2.0))
-        except Exception:
-            return None
-        if cx < 0 or cy < 0 or cx >= self._w or cy >= self._h:
-            return None
-        try:
-            px = self._pix.pixel(cx, cy)
-        except Exception:
-            return None
-        if not px or len(px) < 3:
-            return None
-        return (px[0] / 255.0, px[1] / 255.0, px[2] / 255.0)
 
 
 class _ZIndexLookup:
