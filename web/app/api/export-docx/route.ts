@@ -13,6 +13,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { applyApiGuards, logRejection, logSuccess } from "@/lib/api-guards";
+
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -26,14 +28,19 @@ const DOCX_MIME =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  const guard = await applyApiGuards(req, "/api/export-docx");
+  if (!guard.allowed) return guard.response;
+
   let body: unknown;
   try {
     const text = await req.text();
     if (text.length > MAX_POST_BYTES) {
+      logRejection("/api/export-docx", guard.ipHash, 413, "payload too large");
       return NextResponse.json({ error: "payload too large" }, { status: 413 });
     }
     body = JSON.parse(text);
   } catch {
+    logRejection("/api/export-docx", guard.ipHash, 400, "invalid JSON");
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
 
@@ -63,6 +70,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const udmPath = join(tmp, "doc.udm.json");
   const outputDocx = join(tmp, "output.docx");
 
+  const started = Date.now();
   try {
     await writeFile(udmPath, JSON.stringify(udm));
     // Pass base_dir = web/public so the exporter can resolve the
@@ -70,6 +78,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     // pdf2docx layout-faithful PDF→DOCX path.
     await runOfficeExporter(udmPath, outputDocx, pythonPath, publicDir);
     const bytes = await readFile(outputDocx);
+    logSuccess("/api/export-docx", guard.ipHash, {
+      event: "export",
+      format: "docx",
+      bytes: bytes.length,
+      ms: Date.now() - started,
+    });
     return new NextResponse(new Uint8Array(bytes), {
       status: 200,
       headers: {
@@ -81,6 +95,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    logRejection("/api/export-docx", guard.ipHash, 500, msg);
     return NextResponse.json({ error: `export failed: ${msg}` }, { status: 500 });
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});

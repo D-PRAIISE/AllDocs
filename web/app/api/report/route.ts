@@ -23,6 +23,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { applyApiGuards, logRejection, logSuccess } from "@/lib/api-guards";
+
 export const runtime = "nodejs";
 export const maxDuration = 30;
 export const dynamic = "force-dynamic";
@@ -50,10 +52,16 @@ function ticketsRoot(): string {
 export async function POST(
   req: NextRequest
 ): Promise<NextResponse<ReportResponse | ErrorResponse>> {
+  const guard = await applyApiGuards(req, "/api/report");
+  if (!guard.allowed) {
+    return guard.response as NextResponse<ErrorResponse>;
+  }
+
   let formData: FormData;
   try {
     formData = await req.formData();
   } catch {
+    logRejection("/api/report", guard.ipHash, 400, "invalid multipart");
     return NextResponse.json({ error: "expected multipart/form-data" }, { status: 400 });
   }
 
@@ -116,11 +124,17 @@ export async function POST(
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    logRejection("/api/report", guard.ipHash, 500, msg);
     return NextResponse.json(
       { error: `failed to save report: ${msg}` },
       { status: 500 }
     );
   }
+
+  logSuccess("/api/report", guard.ipHash, {
+    event: "report",
+    bytes: source instanceof File ? source.size : undefined,
+  });
 
   return NextResponse.json({
     ticket_id: ticketId,

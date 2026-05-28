@@ -9,6 +9,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { applyApiGuards, logRejection, logSuccess } from "@/lib/api-guards";
+
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -18,21 +20,28 @@ const MAX_POST_BYTES = 32 * 1024 * 1024;
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  const guard = await applyApiGuards(req, "/api/export-xlsx");
+  if (!guard.allowed) return guard.response;
+
   let body: unknown;
   try {
     const text = await req.text();
     if (text.length > MAX_POST_BYTES) {
+      logRejection("/api/export-xlsx", guard.ipHash, 413, "payload too large");
       return NextResponse.json({ error: "payload too large" }, { status: 413 });
     }
     body = JSON.parse(text);
   } catch {
+    logRejection("/api/export-xlsx", guard.ipHash, 400, "invalid JSON");
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
   const udm = (body as { udm?: unknown } | null)?.udm;
   if (!udm || typeof udm !== "object") {
+    logRejection("/api/export-xlsx", guard.ipHash, 400, "missing udm");
     return NextResponse.json({ error: "body must be { udm: Document }" }, { status: 400 });
   }
   if ((udm as { mode?: unknown }).mode !== "sheet") {
+    logRejection("/api/export-xlsx", guard.ipHash, 400, "wrong mode");
     return NextResponse.json(
       { error: `XLSX export requires mode='sheet'; got mode=${JSON.stringify((udm as { mode?: unknown }).mode)}` },
       { status: 400 }
@@ -46,10 +55,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const udmPath = join(tmp, "doc.udm.json");
   const outputPath = join(tmp, "output.xlsx");
 
+  const started = Date.now();
   try {
     await writeFile(udmPath, JSON.stringify(udm));
     await runExporter(udmPath, outputPath, pythonPath);
     const bytes = await readFile(outputPath);
+    logSuccess("/api/export-xlsx", guard.ipHash, {
+      event: "export",
+      format: "xlsx",
+      bytes: bytes.length,
+      ms: Date.now() - started,
+    });
     return new NextResponse(new Uint8Array(bytes), {
       status: 200,
       headers: {
@@ -61,6 +77,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    logRejection("/api/export-xlsx", guard.ipHash, 500, msg);
     return NextResponse.json({ error: `export failed: ${msg}` }, { status: 500 });
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});

@@ -23,6 +23,8 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { applyApiGuards, logRejection, logSuccess } from "@/lib/api-guards";
+
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -87,8 +89,12 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  const guard = await applyApiGuards(req, "/api/export");
+  if (!guard.allowed) return guard.response;
+
   const lenHeader = req.headers.get("content-length");
   if (lenHeader && Number(lenHeader) > MAX_POST_BYTES) {
+    logRejection("/api/export", guard.ipHash, 413, "payload too large");
     return NextResponse.json({ error: "payload too large" }, { status: 413 });
   }
 
@@ -96,10 +102,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     body = (await req.json()) as { udm?: unknown };
   } catch {
+    logRejection("/api/export", guard.ipHash, 400, "invalid JSON");
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
   }
   const udm = body.udm;
   if (!udm || typeof udm !== "object") {
+    logRejection("/api/export", guard.ipHash, 400, "missing udm");
     return NextResponse.json({ error: "missing 'udm' in body" }, { status: 400 });
   }
 
@@ -112,10 +120,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const udmPath = join(tmp, "doc.udm.json");
   const outputPdf = join(tmp, "output.pdf");
 
+  const started = Date.now();
   try {
     await writeFile(udmPath, JSON.stringify(udm), "utf8");
     await runExporter(udmPath, outputPdf, pythonPath, publicDir);
     const pdfBytes = await readFile(outputPdf);
+    logSuccess("/api/export", guard.ipHash, {
+      event: "export",
+      format: "pdf",
+      bytes: pdfBytes.length,
+      ms: Date.now() - started,
+    });
     return new NextResponse(new Uint8Array(pdfBytes), {
       status: 200,
       headers: {
@@ -127,6 +142,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    logRejection("/api/export", guard.ipHash, 500, msg);
     return NextResponse.json({ error: `export failed: ${msg}` }, { status: 500 });
   } finally {
     await rm(tmp, { recursive: true, force: true }).catch(() => {});

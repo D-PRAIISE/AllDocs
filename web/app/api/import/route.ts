@@ -16,6 +16,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { hashIp, recordEvent } from "@/lib/audit";
+import { checkRateLimit, clientIp } from "@/lib/rate-limit";
+import { maybeSweep } from "@/lib/upload-cleanup";
+
 export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
@@ -90,6 +94,7 @@ function paths() {
     repoRoot,
     servicesRoot: resolve(repoRoot, "services"),
     publicUploads: resolve(webRoot, "public", "uploads"),
+    ticketsRoot: resolve(repoRoot, "tickets"),
   };
 }
 
@@ -136,6 +141,28 @@ interface ErrorResponse {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse<ImportResponse | ErrorResponse>> {
+  const ip = clientIp(req);
+  const decision = checkRateLimit(ip, "/api/import");
+  if (!decision.allowed) {
+    await recordEvent({
+      event: "rate-limited",
+      route: "/api/import",
+      ip_hash: hashIp(ip),
+      status: 429,
+    });
+    return NextResponse.json(
+      { error: `rate limit — retry in ${decision.retryAfterSec}s` },
+      { status: 429, headers: { "Retry-After": String(decision.retryAfterSec) } }
+    );
+  }
+
+  // Best-effort sweep of stale uploads + closed tickets. Lazy so we
+  // don't need an external cron; sweep_interval keeps the cost low.
+  const { publicUploads, ticketsRoot } = paths();
+  maybeSweep(publicUploads, ticketsRoot).catch(() => {
+    /* best-effort */
+  });
+
   let formData: FormData;
   try {
     formData = await req.formData();
@@ -164,7 +191,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   const adapter = ADAPTERS[format];
 
   const sessionId = randomUUID();
-  const { servicesRoot, publicUploads } = paths();
+  const { servicesRoot } = paths();
   const sessionDir = join(publicUploads, sessionId);
   await mkdir(sessionDir, { recursive: true });
 
@@ -182,9 +209,28 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
     await runImporter(adapter, sourcePath, udmPath, assetsDir, urlPrefix, sourceUrl, pythonPath);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    await recordEvent({
+      event: "rejected",
+      route: "/api/import",
+      ip_hash: hashIp(ip),
+      format,
+      bytes: file.size,
+      status: 500,
+      error: msg.slice(0, 200),
+    });
     return NextResponse.json({ error: `Importer failed: ${msg}` }, { status: 500 });
   }
   const ms = Date.now() - started;
+
+  await recordEvent({
+    event: "import",
+    route: "/api/import",
+    ip_hash: hashIp(ip),
+    format,
+    bytes: file.size,
+    ms,
+    status: 200,
+  });
 
   return NextResponse.json({
     session_id: sessionId,

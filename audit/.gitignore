@@ -1,0 +1,3 @@
+# Audit JSONL files. Operational data — never committed.
+*
+!.gitignore
