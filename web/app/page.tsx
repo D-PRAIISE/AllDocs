@@ -1,4 +1,5 @@
 import { HomeClient } from "@/components/HomeClient";
+import { PrivacyFooterLink } from "@/components/PrivacyFooterLink";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 export default function HomePage() {
@@ -58,6 +59,7 @@ function SiteFooter() {
           alldocs · universal document model v0.1.0 · agpl-3.0
         </div>
         <div className="flex items-center gap-4">
+          <PrivacyFooterLink />
           <a
             href="https://github.com/D-PRAIISE/AllDocs"
             target="_blank"

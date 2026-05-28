@@ -2,6 +2,8 @@
 
 import { useCallback, useState, type ChangeEvent, type DragEvent } from "react";
 
+import { track } from "@/lib/telemetry";
+
 interface UploadResult {
   session_id: string;
   udm_url: string;
@@ -40,11 +42,17 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       setError(null);
       setProgress(`uploading ${file.name} (${formatBytes(file.size)})`);
       setIsUploading(true);
+      const ext = file.name.toLowerCase().split(".").pop() || "unknown";
       try {
         const formData = new FormData();
         formData.append("file", file);
         const res = await fetch("/api/import", { method: "POST", body: formData });
         if (!res.ok) {
+          track("import_failed", {
+            route: "/api/import",
+            status: res.status,
+            mode: ext,
+          });
           const j = (await res.json().catch(() => null)) as { error?: string } | null;
           throw new Error(j?.error ?? `HTTP ${res.status}`);
         }
@@ -52,6 +60,13 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
         setProgress(`imported in ${result.ms_taken}ms`);
         onUploaded(result);
       } catch (e) {
+        if (e instanceof Error && e.name && e.name !== "Error") {
+          track("import_threw", {
+            route: "/api/import",
+            error_class: e.name,
+            mode: ext,
+          });
+        }
         setError(e instanceof Error ? e.message : String(e));
         setProgress(null);
       } finally {

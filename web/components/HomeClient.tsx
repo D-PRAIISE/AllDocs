@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import type { Block, Document, FlowContent, SheetContent, SlidesContent } from "@/lib/udm";
+import { track } from "@/lib/telemetry";
 import { useHistory } from "@/lib/use-doc-history";
 import { FixedEditor } from "./FixedEditor";
 import { FlowEditor } from "./FlowEditor";
@@ -166,6 +167,14 @@ export function HomeClient() {
           body: JSON.stringify({ udm: doc }),
         });
         if (!res.ok) {
+          // Anonymous telemetry event: just the route + status. We
+          // deliberately do NOT include the server's error message
+          // body — it may contain document-data fragments.
+          track("export_failed", {
+            route: endpoint,
+            status: res.status,
+            mode: doc?.mode,
+          });
           const j = (await res.json().catch(() => null)) as { error?: string } | null;
           throw new Error(j?.error ?? `HTTP ${res.status}`);
         }
@@ -180,6 +189,15 @@ export function HomeClient() {
         a.remove();
         URL.revokeObjectURL(url);
       } catch (e) {
+        // Network or client-side error (TypeError, etc.) — log the
+        // class name only, never the message body.
+        if (e instanceof Error && e.name && e.name !== "Error") {
+          track("export_threw", {
+            route: endpoint,
+            error_class: e.name,
+            mode: doc?.mode,
+          });
+        }
         setError(e instanceof Error ? e.message : String(e));
       } finally {
         setIsDownloading(false);
