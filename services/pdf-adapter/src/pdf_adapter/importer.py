@@ -379,12 +379,17 @@ def _page_to_udm(
                     }
                 )
     if text_runs:
-        # Layer-level z: earliest text op encountered. Reasonable
-        # approximation when all text on a page paints together.
-        z = z_lookup.first(("fill-text", "stroke-text", "ignore-text"))
+        # NOTE: we used to stamp z_index = first-text-op here, but that
+        # mis-orders every later text run when a shape paints between
+        # text ops (e.g. a bank statement that draws background boxes
+        # AFTER its header text and then more text on top of those
+        # boxes — the shape would paint over the entire text layer
+        # because we treated text as one big z=first batch).
+        # The correct fix is per-run z + a paint-event interleave in
+        # the exporter (v0.2). For now, leave text un-stamped; the
+        # exporter's bucket-sort then paints text last, which matches
+        # the common case (text on top of background shapes).
         layer: dict[str, Any] = {"type": "text", "runs": text_runs}
-        if z is not None:
-            layer["_meta"] = {"z_index": z}
         layers.append(layer)
 
     for xref, rect, opacity, clip in _image_placements(page, doc):

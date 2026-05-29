@@ -179,6 +179,25 @@ def _try_passthrough(
     if not source_path.exists():
         return False
 
+    # Encrypted source: a byte-identical copy keeps the original
+    # encryption. If the caller wanted an unprotected output (which is
+    # the default for the "↓ pdf" button), passthrough would silently
+    # ship an encrypted PDF back — surprising. Detect this and fall
+    # through to render so the user always gets the encryption state
+    # they asked for. Owner-only encryption (silent unlock at import)
+    # is still allowed through — those don't have a real user password
+    # so the copied output opens without a prompt anyway.
+    try:
+        probe = pymupdf.open(str(source_path))
+        try:
+            if probe.needs_pass and not probe.authenticate(""):
+                return False
+        finally:
+            probe.close()
+    except Exception:
+        # Can't probe → don't assume safe; let the render path handle it.
+        return False
+
     shutil.copyfile(str(source_path), str(output_path))
     return True
 

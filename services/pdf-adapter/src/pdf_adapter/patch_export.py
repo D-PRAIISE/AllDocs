@@ -81,6 +81,16 @@ def try_patch_export(
         return False
 
     doc = pymupdf.open(str(source_path))
+    # Encrypted source: PyMuPDF returns the doc in a locked state and
+    # iterating pages raises "document closed or encrypted". Try the
+    # empty-password unlock first (covers owner-only encryption — common,
+    # silent at import time). If that fails, the source needs a user
+    # password we don't have here (we deliberately don't store it), so
+    # return False and let the render path build a fresh PDF from UDM.
+    if doc.needs_pass:
+        if not doc.authenticate(""):
+            doc.close()
+            return False
     rebuilt: pymupdf.Document | None = None
     try:
         # Page operations (reorder / delete / insert / rotate) rebuild the
