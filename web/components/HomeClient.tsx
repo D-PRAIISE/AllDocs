@@ -18,7 +18,7 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
-  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx";
+  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx" | "image";
   ms_taken: number;
 }
 
@@ -480,7 +480,13 @@ export function HomeClient() {
         onClose={() => setReportOpen(false)}
         doc={isEditing ? draft.state : doc}
         sourceUrl={
-          meta ? `/uploads/${meta.session_id}/source.${meta.format}` : null
+          meta
+            ? `/uploads/${meta.session_id}/source.${
+                meta.format === "image"
+                  ? (meta.filename.toLowerCase().split(".").pop() || "png")
+                  : meta.format
+              }`
+            : null
         }
         sourceFilename={meta?.filename ?? null}
         sessionId={meta?.session_id ?? null}

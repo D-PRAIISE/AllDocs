@@ -130,6 +130,28 @@ def _ensure_merged_tessdata(sys_tessdata: Path, user_tessdata: Path) -> str:
     return _MERGED_TESSDATA_DIR
 
 
+def _setup_tesseract() -> None:
+    """Locate Tesseract + configure pytesseract + resolve TESSDATA_PREFIX.
+    Idempotent. Raises RuntimeError when Tesseract or pytesseract is
+    unavailable."""
+    tess = _locate_tesseract()
+    if tess is None:
+        raise RuntimeError("Tesseract binary not found (install it or add it to PATH)")
+    try:
+        import pytesseract
+    except ImportError as e:  # pragma: no cover - environment issue
+        raise RuntimeError(f"pytesseract not installed: {e}") from e
+    pytesseract.pytesseract.tesseract_cmd = tess
+    sys_tessdata = Path(tess).parent / "tessdata"
+    user_tessdata = os.environ.get("ALLDOCS_TESSDATA")
+    if user_tessdata:
+        os.environ["TESSDATA_PREFIX"] = _ensure_merged_tessdata(
+            sys_tessdata, Path(user_tessdata)
+        )
+    elif "TESSDATA_PREFIX" not in os.environ and sys_tessdata.is_dir():
+        os.environ["TESSDATA_PREFIX"] = str(sys_tessdata)
+
+
 def _locate_tesseract() -> str | None:
     """Find the tesseract executable. PATH first, then the standard
     Windows (UB-Mannheim) install location."""
@@ -173,58 +195,50 @@ def ocr_page(
 ) -> OcrResult:
     """Render ``page`` and OCR it. Returns runs in PDF points.
 
-    ``lang`` is a Tesseract language spec ("eng", "chi_sim", "jpn",
-    "eng+chi_sim", …). None defaults to Tesseract's own default (eng).
-    The language pack must be installed (tessdata dir next to the
-    binary); unknown languages raise from pytesseract.
-
-    ``granularity`` is "line" (default — one run per OCR'd line) or
-    "word" (one run per token). Word granularity lets the editor
-    redact + replace a single word without disturbing the rest of
-    the line.
-
-    Raises RuntimeError if Tesseract or pytesseract is unavailable —
-    callers should check ``tesseract_available()`` first if they want
-    to degrade gracefully.
+    Convenience wrapper around ocr_image: renders the page to a PIL
+    image at ``dpi`` and delegates. See ocr_image for parameters.
     """
-    tess = _locate_tesseract()
-    if tess is None:
-        raise RuntimeError("Tesseract binary not found (install it or add it to PATH)")
-
+    _setup_tesseract()
     try:
-        import pytesseract
         from PIL import Image
     except ImportError as e:  # pragma: no cover - environment issue
-        raise RuntimeError(f"pytesseract / Pillow not installed: {e}") from e
-
-    pytesseract.pytesseract.tesseract_cmd = tess
-
-    # tessdata resolution. Default: the tessdata dir next to the
-    # Tesseract binary (ships with eng + osd). For non-English OCR the
-    # user can drop .traineddata files alongside that dir (admin
-    # required on Windows / Program Files) OR set ALLDOCS_TESSDATA to
-    # a user-writable directory containing the extra packs. We honour
-    # the env var by merging both dirs into a single fallback dir
-    # consulted by Tesseract via TESSDATA_PREFIX. eng + osd are always
-    # available because we symlink/copy them from the system dir.
-    sys_tessdata = Path(tess).parent / "tessdata"
-    user_tessdata = os.environ.get("ALLDOCS_TESSDATA")
-    if user_tessdata:
-        os.environ["TESSDATA_PREFIX"] = _ensure_merged_tessdata(
-            sys_tessdata, Path(user_tessdata)
-        )
-    elif "TESSDATA_PREFIX" not in os.environ and sys_tessdata.is_dir():
-        os.environ["TESSDATA_PREFIX"] = str(sys_tessdata)
-
+        raise RuntimeError(f"Pillow not installed: {e}") from e
     pix = page.get_pixmap(dpi=dpi)
     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    # Image was rendered at `dpi` DPI; px → pt at 72 DPI scale.
+    return ocr_image(img, scale_to_pt=72.0 / dpi, lang=lang, granularity=granularity)
+
+
+def ocr_image(
+    img: Any,
+    scale_to_pt: float = 72.0 / 96.0,
+    lang: str | None = None,
+    granularity: str = "line",
+) -> OcrResult:
+    """OCR a PIL image directly. Used both by ocr_page (after PDF page
+    rendering) and by the image importer (for standalone image uploads).
+
+    ``scale_to_pt`` converts pixel coordinates → PDF points. The default
+    72/96 treats the image as 96 DPI (web convention); pass 72/dpi when
+    you rendered at a known DPI.
+
+    ``lang`` is a Tesseract language spec ("eng", "chi_sim", "jpn",
+    "eng+chi_sim", …). None defaults to Tesseract's own default (eng).
+
+    ``granularity`` is "line" (one run per OCR'd line) or "word".
+    """
+    _setup_tesseract()
+    try:
+        import pytesseract
+    except ImportError as e:  # pragma: no cover - environment issue
+        raise RuntimeError(f"pytesseract not installed: {e}") from e
 
     kwargs: dict[str, Any] = {"output_type": pytesseract.Output.DICT}
     if lang:
         kwargs["lang"] = lang
     data = pytesseract.image_to_data(img, **kwargs)
 
-    scale = 72.0 / dpi  # pixels -> points
+    scale = scale_to_pt  # pixels -> points
 
     runs: list[OcrRun] = []
     n = len(data["text"])

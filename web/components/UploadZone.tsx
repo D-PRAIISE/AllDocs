@@ -9,7 +9,7 @@ interface UploadResult {
   udm_url: string;
   filename: string;
   size: number;
-  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx";
+  format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx" | "image";
   ms_taken: number;
 }
 
@@ -18,7 +18,12 @@ interface UploadZoneProps {
 }
 
 const ACCEPT =
-  ".pdf,.docx,.xlsx,.pptx,.md,.markdown,.html,.htm,.epub,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/markdown,text/html,application/epub+zip";
+  ".pdf,.docx,.xlsx,.pptx,.md,.markdown,.html,.htm,.epub," +
+  ".png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff," +
+  "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document," +
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet," +
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation," +
+  "text/markdown,text/html,application/epub+zip,image/*";
 const ALLOWED_EXTS = [
   ".pdf",
   ".docx",
@@ -29,6 +34,14 @@ const ALLOWED_EXTS = [
   ".html",
   ".htm",
   ".epub",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".tif",
+  ".tiff",
 ];
 
 export function UploadZone({ onUploaded }: UploadZoneProps) {
@@ -109,7 +122,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       const file = files[0];
       const lower = file.name.toLowerCase();
       if (!ALLOWED_EXTS.some((ext) => lower.endsWith(ext))) {
-        setError("supported formats: pdf, docx, xlsx, pptx, md, html, epub");
+        setError("supported formats: pdf, docx, xlsx, pptx, md, html, epub, png/jpg/webp/gif/bmp/tiff");
         return;
       }
       void upload(file);
@@ -168,7 +181,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
             drop a file
           </div>
           <div className="font-sans text-lg text-fg">
-            PDF · DOCX · XLSX · PPTX · Markdown · HTML · EPUB
+            PDF · DOCX · XLSX · PPTX · Markdown · HTML · EPUB · images
           </div>
           <div className="font-mono text-[0.65rem] text-subtle">or</div>
           <label className="btn-primary inline-flex cursor-pointer">

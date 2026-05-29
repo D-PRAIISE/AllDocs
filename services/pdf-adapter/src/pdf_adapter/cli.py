@@ -131,17 +131,31 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Exported {args.output} ({size} bytes)", file=sys.stderr)
         return 0
 
+    in_ext = args.input.suffix.lower().lstrip(".")
+    is_image = in_ext in {"png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff"}
+
     try:
-        udm = import_pdf(
-            args.input,
-            assets_dir=args.assets_dir,
-            assets_url_prefix=args.assets_url_prefix,
-            source_url=args.source_url,
-            enable_ocr=not args.no_ocr,
-            ocr_lang=args.ocr_lang,
-            ocr_granularity=args.ocr_granularity,
-            password=args.password,
-        )
+        if is_image:
+            from .image_importer import import_image
+
+            udm = import_image(
+                args.input,
+                source_url=args.source_url,
+                enable_ocr=not args.no_ocr,
+                ocr_lang=args.ocr_lang,
+                ocr_granularity=args.ocr_granularity,
+            )
+        else:
+            udm = import_pdf(
+                args.input,
+                assets_dir=args.assets_dir,
+                assets_url_prefix=args.assets_url_prefix,
+                source_url=args.source_url,
+                enable_ocr=not args.no_ocr,
+                ocr_lang=args.ocr_lang,
+                ocr_granularity=args.ocr_granularity,
+                password=args.password,
+            )
     except Exception as e:
         # Use a distinctive exit code for the encrypted case so the
         # web layer can detect it and prompt the user for a password.

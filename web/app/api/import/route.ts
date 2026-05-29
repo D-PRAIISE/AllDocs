@@ -30,8 +30,21 @@ const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
 const SUBPROCESS_TIMEOUT_MS = 180_000;
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // PK\3\4 (DOCX/ODT/XLSX/PPTX)
+// Image magic bytes — used by detectFormat so a renamed file with the
+// wrong extension still gets rejected.
+const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff]);
+const GIF_MAGIC = Buffer.from([0x47, 0x49, 0x46, 0x38]);
+const BMP_MAGIC = Buffer.from([0x42, 0x4d]);
+// WebP: starts with "RIFF" then 4 bytes then "WEBP" at offset 8
+// TIFF: starts with II*\0 (little-endian) or MM\0* (big-endian)
+const TIFF_LE = Buffer.from([0x49, 0x49, 0x2a, 0x00]);
+const TIFF_BE = Buffer.from([0x4d, 0x4d, 0x00, 0x2a]);
+const IMAGE_EXTS = new Set([
+  "png", "jpg", "jpeg", "webp", "gif", "bmp", "tif", "tiff",
+]);
 
-type Format = "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx";
+type Format = "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx" | "image";
 
 interface AdapterSpec {
   format: Format;
@@ -84,6 +97,16 @@ const ADAPTERS: Record<Format, AdapterSpec> = {
     pythonPathSubdir: "office-adapter/src",
     extractsAssets: false,
   },
+  // Raw image uploads (PNG/JPG/WEBP/GIF/BMP/TIFF) — wrapped as a
+  // single-page fixed-mode UDM by the pdf-adapter's image_importer
+  // (it sits next to the PDF importer because they share the OCR
+  // pipeline and produce the same UDM mode).
+  image: {
+    format: "image",
+    module: "pdf_adapter.cli",
+    pythonPathSubdir: "pdf-adapter/src",
+    extractsAssets: false,
+  },
 };
 
 function paths() {
@@ -125,7 +148,31 @@ function detectFormat(buf: Buffer, filename: string): Format | null {
   if (ext === "pptx" && buf.length >= 4 && buf.subarray(0, 4).equals(ZIP_MAGIC)) {
     return "pptx";
   }
+  // Images — accept any extension in the allowed list whose magic
+  // bytes match the format. This catches the renamed-extension case
+  // (e.g. JPEG saved as .png) by checking the actual bytes.
+  if (IMAGE_EXTS.has(ext) && _isImageMagic(buf)) {
+    return "image";
+  }
   return null;
+}
+
+function _isImageMagic(buf: Buffer): boolean {
+  if (buf.length >= 4 && buf.subarray(0, 4).equals(PNG_MAGIC)) return true;
+  if (buf.length >= 3 && buf.subarray(0, 3).equals(JPEG_MAGIC)) return true;
+  if (buf.length >= 4 && buf.subarray(0, 4).equals(GIF_MAGIC)) return true;
+  if (buf.length >= 2 && buf.subarray(0, 2).equals(BMP_MAGIC)) return true;
+  if (
+    buf.length >= 12 &&
+    buf.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buf.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return true;
+  }
+  if (buf.length >= 4 && (buf.subarray(0, 4).equals(TIFF_LE) || buf.subarray(0, 4).equals(TIFF_BE))) {
+    return true;
+  }
+  return false;
 }
 
 interface ImportResponse {
@@ -188,7 +235,7 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   const format = detectFormat(buf, file.name);
   if (format === null) {
     return NextResponse.json(
-      { error: "Unsupported file type — supported: PDF, DOCX, XLSX, PPTX, MD, HTML, EPUB" },
+      { error: "Unsupported file type — supported: PDF, DOCX, XLSX, PPTX, MD, HTML, EPUB, PNG/JPG/WebP/GIF/BMP/TIFF" },
       { status: 415 }
     );
   }
@@ -199,11 +246,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   const sessionDir = join(publicUploads, sessionId);
   await mkdir(sessionDir, { recursive: true });
 
-  const sourcePath = join(sessionDir, `source.${format}`);
+  // The image format covers many extensions (png/jpg/webp/...); keep
+  // the original so PIL sniffs the right decoder and so the data URL
+  // mime type matches what was uploaded.
+  const sourceExt =
+    format === "image"
+      ? (file.name.toLowerCase().split(".").pop() || "png")
+      : format;
+  const sourcePath = join(sessionDir, `source.${sourceExt}`);
   const udmPath = join(sessionDir, "doc.udm.json");
   const assetsDir = join(sessionDir, "assets");
   const urlPrefix = `/uploads/${sessionId}/assets`;
-  const sourceUrl = `/uploads/${sessionId}/source.${format}`;
+  const sourceUrl = `/uploads/${sessionId}/source.${sourceExt}`;
   const pythonPath = resolve(servicesRoot, adapter.pythonPathSubdir);
 
   await writeFile(sourcePath, buf);
