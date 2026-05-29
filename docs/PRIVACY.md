@@ -41,7 +41,3 @@ AllDocs sends no telemetry today. We may later add **opt-in**
 anonymous error telemetry — event types only, never document
 content. It will default to off and be one click to enable / disable.
 
-## Source code
-
-Open source under AGPL-3.0 at <https://github.com/D-PRAIISE/AllDocs>.
-Anyone can audit how data is handled.

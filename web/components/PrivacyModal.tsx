@@ -118,17 +118,9 @@ export function PrivacyModal({ open, onClose }: PrivacyModalProps) {
           </section>
 
           <div className="font-mono text-[0.65rem] text-subtle border-t border-border pt-3 leading-relaxed">
-            Full details in{" "}
-            <a
-              href="https://github.com/D-PRAIISE/AllDocs/blob/main/docs/PRIVACY.md"
-              target="_blank"
-              rel="noreferrer"
-              className="text-muted hover:text-fg underline-offset-4 hover:underline"
-            >
-              docs/PRIVACY.md
-            </a>
-            . AllDocs is open source — you can audit how data is
-            handled.
+            AllDocs auto-deletes uploaded files after 24 hours. Bug
+            reports are opt-in per submission and held only until the
+            issue is closed (plus 30 days).
           </div>
         </div>
       </div>

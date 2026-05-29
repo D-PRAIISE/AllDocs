@@ -24,7 +24,16 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
-const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
+// Upload cap, in bytes. Default 200 MB — generous vs. competitors
+// (Smallpdf ~10MB free, ilovePDF 200MB throttled) while staying inside
+// the subprocess memory envelope: PyMuPDF holds the whole PDF in
+// memory while patching / rendering, and OCR on a multi-hundred-MB
+// scan would blow the 180s subprocess timeout anyway.
+//
+// Operator override: set ALLDOCS_MAX_UPLOAD_MB to whatever cap your
+// host can actually serve safely (RAM + bandwidth + timeout).
+const MAX_FILE_BYTES =
+  Number(process.env.ALLDOCS_MAX_UPLOAD_MB ?? 200) * 1024 * 1024;
 // OCR of scanned pages runs at import time (~6-8 s/page via Tesseract),
 // so the importer can legitimately take a while on multi-page scans.
 const SUBPROCESS_TIMEOUT_MS = 180_000;
@@ -209,6 +218,18 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   maybeSweep(publicUploads, ticketsRoot).catch(() => {
     /* best-effort */
   });
+
+  // Early-reject anything obviously over the cap by Content-Length so
+  // we don't buffer multi-GB uploads into memory before discovering
+  // they're too big. The post-parse file.size check below is the
+  // authoritative one (header can lie).
+  const declared = Number(req.headers.get("content-length") || 0);
+  if (declared > MAX_FILE_BYTES + 1024 * 1024) {
+    return NextResponse.json(
+      { error: `File too large; max ${MAX_FILE_BYTES / 1024 / 1024} MB` },
+      { status: 413 }
+    );
+  }
 
   let formData: FormData;
   try {

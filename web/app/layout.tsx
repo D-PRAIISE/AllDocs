@@ -18,7 +18,7 @@ const mono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "AllDocs · Universal Document Editor",
   description:
-    "Free, no-signup universal document editor and converter. Drop a PDF or DOCX, view it, edit it, export it. Open source under AGPL-3.0.",
+    "Free, no-signup universal document editor and converter. Drop a PDF, DOCX, XLSX, PPTX, Markdown, HTML, EPUB, or image — view it, edit it, export it back.",
 };
 
 // Inline script: read the stored theme and stamp data-theme onto <html>
