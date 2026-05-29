@@ -1360,10 +1360,14 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       <div
         className={
           (layout === "grid"
-            ? "flex flex-wrap justify-center gap-6"
-            : "space-y-6 flex flex-col items-center") +
+            ? "flex flex-wrap gap-6 [justify-content:safe_center]"
+            : "space-y-6 flex flex-col [align-items:safe_center]") +
           " overflow-y-auto overflow-x-auto border border-border bg-bg/40 p-4"
         }
+        // `safe center`: centre children when they fit, but fall back to
+        // left/top when they don't. Without this, zooming a fixed-mode
+        // page wider than the viewport pushes half the overflow off the
+        // left edge where browser scrollbars can't reach.
         style={{ maxHeight: "75vh" }}
       >
         {fixed.pages.map((page, pageIdx) => (
