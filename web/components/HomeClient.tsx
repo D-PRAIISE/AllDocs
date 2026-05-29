@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { Block, Document, FlowContent, SheetContent, SlidesContent } from "@/lib/udm";
 import { track } from "@/lib/telemetry";
 import { useHistory } from "@/lib/use-doc-history";
+import { ExportPasswordModal } from "./ExportPasswordModal";
 import { FixedEditor } from "./FixedEditor";
 import { FlowEditor } from "./FlowEditor";
 import { ReportProblemModal } from "./ReportProblemModal";
@@ -20,6 +21,7 @@ interface UploadResult {
   size: number;
   format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx" | "image";
   ms_taken: number;
+  had_password?: boolean;
 }
 
 const DEFAULT_SRC = "/synthetic.udm.json";
@@ -43,6 +45,7 @@ export function HomeClient() {
   const [isDirty, setIsDirty] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [exportPasswordOpen, setExportPasswordOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -155,16 +158,22 @@ export function HomeClient() {
         | "/api/export-epub"
         | "/api/export-xlsx"
         | "/api/export-pptx",
-      ext: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx"
+      ext: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx",
+      password?: string
     ) => {
       if (!doc) return;
       setIsDownloading(true);
       setError(null);
       try {
+        const body: Record<string, unknown> = { udm: doc };
+        // Encrypt-on-export only meaningful for /api/export (PDF).
+        if (password && endpoint === "/api/export") {
+          body.password = password;
+        }
         const res = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ udm: doc }),
+          body: JSON.stringify(body),
         });
         if (!res.ok) {
           // Anonymous telemetry event: just the route + status. We
@@ -354,6 +363,14 @@ export function HomeClient() {
                     {isDownloading ? "exporting…" : "↓ pdf"}
                   </button>
                   <button
+                    onClick={() => setExportPasswordOpen(true)}
+                    disabled={isDownloading}
+                    className="btn-ghost"
+                    title="Download as PDF with a password"
+                  >
+                    🔒 pdf
+                  </button>
+                  <button
                     onClick={handleDownloadDocx}
                     disabled={isDownloading}
                     className="btn-ghost"
@@ -474,6 +491,17 @@ export function HomeClient() {
           <UdmViewer doc={doc} />
         )
       )}
+
+      <ExportPasswordModal
+        open={exportPasswordOpen}
+        onClose={() => setExportPasswordOpen(false)}
+        onConfirm={async (pw) => {
+          await downloadExport("/api/export", "pdf", pw || undefined);
+          setExportPasswordOpen(false);
+        }}
+        sourceHadPassword={!!meta?.had_password}
+        isExporting={isDownloading}
+      />
 
       <ReportProblemModal
         open={reportOpen}

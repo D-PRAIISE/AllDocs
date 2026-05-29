@@ -324,6 +324,11 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
     size: file.size,
     format,
     ms_taken: ms,
+    // True only when the user actually supplied a non-empty password
+    // to unlock the source. Owner-only-encrypted PDFs unlock with
+    // an empty password and don't count — surfacing the hint there
+    // would be misleading.
+    had_password: !!password,
   });
 }
 

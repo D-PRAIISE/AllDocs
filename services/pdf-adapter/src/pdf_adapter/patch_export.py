@@ -50,6 +50,7 @@ def try_patch_export(
     udm: dict[str, Any],
     output_path: str | Path,
     base_dir: Path,
+    password: str | None = None,
 ) -> bool:
     """Try to render the UDM by patching the source PDF.
 
@@ -63,6 +64,12 @@ def try_patch_export(
         we can't handle yet)
       - Diff contains a change we can't patch (e.g., new text run added,
         existing run deleted)
+
+    ``password``: if given, the patched output is encrypted with AES-256
+    using this string as both owner and user password. If the source
+    PDF was itself encrypted, opening it requires the user to have
+    supplied that password upstream (the importer authenticates and
+    we work against an unlocked document here).
     """
     passthrough = (udm.get("metadata") or {}).get("passthrough") or {}
     source_url = passthrough.get("source_url")
@@ -114,7 +121,7 @@ def try_patch_export(
             _apply_added_annotations(work, added_annots)
             _apply_form_fields(work, form_ops)
             _apply_image_swaps(work, image_swaps)
-            work.save(str(output_path), garbage=4, deflate=True, clean=True)
+            _save(work, output_path, password)
             return True
 
         shape_edits, shape_blocked = _diff_shapes(udm, work)
@@ -169,7 +176,7 @@ def try_patch_export(
         _apply_added_annotations(work, added_annots)
         _apply_form_fields(work, form_ops)
         _apply_image_swaps(work, image_swaps)
-        work.save(str(output_path), garbage=4, deflate=True, clean=True)
+        _save(work, output_path, password)
         return True
     finally:
         doc.close()
@@ -556,6 +563,18 @@ def _diff_ocr_runs(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
                 )
 
     return dict(edits)
+
+
+def _save(work: pymupdf.Document, output_path: str | Path, password: str | None) -> None:
+    """Save the patched document. Encrypts with AES-256 when a password
+    is supplied; otherwise writes unprotected. Matches the render
+    path's save settings."""
+    kwargs: dict[str, Any] = {"garbage": 4, "deflate": True, "clean": True}
+    if password:
+        kwargs["encryption"] = pymupdf.PDF_ENCRYPT_AES_256
+        kwargs["owner_pw"] = password
+        kwargs["user_pw"] = password
+    work.save(str(output_path), **kwargs)
 
 
 def _diff_runs(

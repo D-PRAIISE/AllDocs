@@ -67,7 +67,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     // base_dir = publicDir so passthrough source_urls (e.g.
     // "/uploads/<id>/source.pdf") and asset URLs resolve to real files.
-    await runExporter(udmPath, outputPdf, pythonPath, publicDir);
+    // GET path never sets a password (it's the open-from-disk shortcut
+    // used for browser-side links, not the user-driven download flow).
+    await runExporter(udmPath, outputPdf, pythonPath, publicDir, null);
     const pdfBytes = await readFile(outputPdf);
 
     const filename = deriveFilename(udmParam);
@@ -98,9 +100,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "payload too large" }, { status: 413 });
   }
 
-  let body: { udm?: unknown };
+  let body: { udm?: unknown; password?: unknown };
   try {
-    body = (await req.json()) as { udm?: unknown };
+    body = (await req.json()) as { udm?: unknown; password?: unknown };
   } catch {
     logRejection("/api/export", guard.ipHash, 400, "invalid JSON");
     return NextResponse.json({ error: "invalid JSON body" }, { status: 400 });
@@ -110,6 +112,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     logRejection("/api/export", guard.ipHash, 400, "missing udm");
     return NextResponse.json({ error: "missing 'udm' in body" }, { status: 400 });
   }
+  // Optional encrypt-on-export password. Empty string = unprotected
+  // (the user explicitly cleared the password); only forwarded when
+  // non-empty so passthrough/render-without-encryption still apply.
+  const password =
+    typeof body.password === "string" && body.password.length > 0
+      ? body.password
+      : null;
 
   const webRoot = process.cwd();
   const repoRoot = resolve(webRoot, "..");
@@ -123,7 +132,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const started = Date.now();
   try {
     await writeFile(udmPath, JSON.stringify(udm), "utf8");
-    await runExporter(udmPath, outputPdf, pythonPath, publicDir);
+    await runExporter(udmPath, outputPdf, pythonPath, publicDir, password);
     const pdfBytes = await readFile(outputPdf);
     logSuccess("/api/export", guard.ipHash, {
       event: "export",
@@ -153,10 +162,14 @@ function runExporter(
   udmPath: string,
   outputPdf: string,
   pythonPath: string,
-  baseDir?: string
+  baseDir: string | undefined,
+  password: string | null
 ): Promise<void> {
   return new Promise((resolve_, reject) => {
-    const env = { ...process.env, PYTHONPATH: pythonPath };
+    // Password is passed via env var so it never lands in argv (visible
+    // in `ps`) or shell history. Empty / unset = unprotected output.
+    const env: NodeJS.ProcessEnv = { ...process.env, PYTHONPATH: pythonPath };
+    if (password) env.ALLDOCS_EXPORT_PASSWORD = password;
     const args = ["-m", "pdf_adapter.cli", "--export", udmPath, "-o", outputPdf];
     if (baseDir) args.push("--base-dir", baseDir);
     const proc = spawn("python", args, { env, windowsHide: true });

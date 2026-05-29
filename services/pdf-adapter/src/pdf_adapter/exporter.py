@@ -54,11 +54,19 @@ def export_pdf(
     udm: dict[str, Any],
     output_path: str | Path,
     base_dir: str | Path | None = None,
+    password: str | None = None,
 ) -> None:
     """Render a UDM document to a PDF file at ``output_path``.
 
     ``base_dir`` is used to resolve relative ``data_ref`` URLs in
     ``udm.resources``. It defaults to the current working directory.
+
+    ``password``: if given, the output PDF is encrypted with AES-256
+    using this string as both the owner and user password. The
+    passthrough path is skipped (a byte-identical copy can't be
+    re-encrypted); patch and render paths both encrypt at save time.
+    Pass None (default) to write the PDF unprotected, regardless of
+    whether the source had a password.
     """
     if udm.get("mode") == "flow":
         # Cross-format: flow UDM (e.g. imported DOCX) -> paginated fixed UDM.
@@ -72,7 +80,11 @@ def export_pdf(
 
     base = Path(base_dir) if base_dir else Path.cwd()
 
-    if _try_passthrough(udm, output_path, base):
+    # Passthrough is a byte-identical copy — we can't apply or strip
+    # encryption without re-saving. Skip it whenever the caller asked
+    # for a specific password (set or remove) so the user always gets
+    # the encryption state they asked for.
+    if password is None and _try_passthrough(udm, output_path, base):
         return
 
     # Patch-based export: when the UDM differs from the source only by
@@ -81,7 +93,7 @@ def export_pdf(
     # preserves font fidelity, vector precision, annotations, AcroForms,
     # and every other resource we don't yet model in UDM. See patch_export.py
     # and project_alldocs_pdf_adapter.md lesson #14.
-    if patch_export.try_patch_export(udm, output_path, base):
+    if patch_export.try_patch_export(udm, output_path, base, password=password):
         return
 
     doc = pymupdf.open()
@@ -104,9 +116,25 @@ def export_pdf(
             )
 
         _apply_metadata(doc, udm.get("metadata", {}))
-        doc.save(str(output_path), garbage=4, deflate=True, clean=True)
+        _save_with_optional_password(doc, output_path, password)
     finally:
         doc.close()
+
+
+def _save_with_optional_password(
+    doc: pymupdf.Document,
+    output_path: str | Path,
+    password: str | None,
+) -> None:
+    """Wrap doc.save with encryption args when a password is supplied.
+    Centralised so patch_export and the render path emit identical
+    on-disk encryption settings."""
+    common_kwargs: dict[str, Any] = {"garbage": 4, "deflate": True, "clean": True}
+    if password:
+        common_kwargs["encryption"] = pymupdf.PDF_ENCRYPT_AES_256
+        common_kwargs["owner_pw"] = password
+        common_kwargs["user_pw"] = password
+    doc.save(str(output_path), **common_kwargs)
 
 
 def _load_tounicode_cmaps(

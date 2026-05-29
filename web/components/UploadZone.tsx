@@ -11,6 +11,7 @@ interface UploadResult {
   size: number;
   format: "pdf" | "docx" | "md" | "html" | "epub" | "xlsx" | "pptx" | "image";
   ms_taken: number;
+  had_password?: boolean;
 }
 
 interface UploadZoneProps {

@@ -120,13 +120,22 @@ def main(argv: list[str] | None = None) -> int:
         if not args.output:
             print("error: --export requires -o OUTPUT", file=sys.stderr)
             return 2
-        if args.base_dir is not None:
-            from .exporter import export_pdf
+        # Password (when encrypting on export) comes via env var so it
+        # never ends up in `ps` / shell history / argv. Empty / unset
+        # means write the PDF unprotected.
+        import os as _os
 
-            udm = json.loads(args.input.read_text(encoding="utf-8"))
-            export_pdf(udm, args.output, base_dir=args.base_dir)
-        else:
-            export_pdf_from_file(args.input, args.output)
+        export_password = _os.environ.get("ALLDOCS_EXPORT_PASSWORD") or None
+
+        from .exporter import export_pdf
+
+        udm = json.loads(args.input.read_text(encoding="utf-8"))
+        export_pdf(
+            udm,
+            args.output,
+            base_dir=args.base_dir,
+            password=export_password,
+        )
         size = args.output.stat().st_size
         print(f"Exported {args.output} ({size} bytes)", file=sys.stderr)
         return 0
