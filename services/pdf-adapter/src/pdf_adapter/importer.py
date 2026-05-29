@@ -50,6 +50,21 @@ WEIGHT_NAMES: dict[str, int] = {
 }
 
 
+class EncryptedPdfError(Exception):
+    """Raised when a PDF is encrypted and we can't open it without a
+    password the user hasn't supplied. The web layer translates this
+    into a structured error so the frontend can prompt for the
+    password and retry."""
+
+    def __init__(self, *, wrong_password: bool = False) -> None:
+        super().__init__(
+            "PDF is password-protected — wrong password"
+            if wrong_password
+            else "PDF is password-protected — password required"
+        )
+        self.wrong_password = wrong_password
+
+
 def import_pdf(
     path: str | Path,
     assets_dir: str | Path | None = None,
@@ -58,6 +73,7 @@ def import_pdf(
     enable_ocr: bool = True,
     ocr_lang: str | None = None,
     ocr_granularity: str = "line",
+    password: str | None = None,
 ) -> dict[str, Any]:
     """Read a PDF file and produce a UDM v0.1.0 document.
 
@@ -88,6 +104,20 @@ def import_pdf(
 
     doc = pymupdf.open(stream=raw, filetype="pdf")
     try:
+        # Encrypted PDFs come back from open() in a locked state —
+        # iterating pages throws "document closed or encrypted". We
+        # try the empty password first to cover the very common case
+        # of "owner-only" encrypted PDFs (open without prompt in
+        # Acrobat, restrict editing/printing). If that fails, try the
+        # user-supplied password. If still locked, surface a structured
+        # error so the web layer can prompt the user.
+        if doc.needs_pass:
+            authed = bool(doc.authenticate(""))
+            if not authed and password:
+                authed = bool(doc.authenticate(password))
+            if not authed:
+                raise EncryptedPdfError(wrong_password=bool(password))
+
         fonts: dict[str, dict[str, Any]] = {}
         images: dict[int, dict[str, Any]] = {}
         pages: list[dict[str, Any]] = []

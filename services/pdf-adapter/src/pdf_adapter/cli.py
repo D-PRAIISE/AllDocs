@@ -87,6 +87,16 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--password",
+        default=None,
+        help=(
+            "Import: password for an encrypted PDF. Owner-only encryption "
+            "(no open password) is authenticated automatically with an "
+            "empty password; this flag is for documents that actually "
+            "require a user password to open."
+        ),
+    )
+    parser.add_argument(
         "--export",
         action="store_true",
         help="Export mode: input is a UDM JSON, output is a PDF",
@@ -121,15 +131,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Exported {args.output} ({size} bytes)", file=sys.stderr)
         return 0
 
-    udm = import_pdf(
-        args.input,
-        assets_dir=args.assets_dir,
-        assets_url_prefix=args.assets_url_prefix,
-        source_url=args.source_url,
-        enable_ocr=not args.no_ocr,
-        ocr_lang=args.ocr_lang,
-        ocr_granularity=args.ocr_granularity,
-    )
+    try:
+        udm = import_pdf(
+            args.input,
+            assets_dir=args.assets_dir,
+            assets_url_prefix=args.assets_url_prefix,
+            source_url=args.source_url,
+            enable_ocr=not args.no_ocr,
+            ocr_lang=args.ocr_lang,
+            ocr_granularity=args.ocr_granularity,
+            password=args.password,
+        )
+    except Exception as e:
+        # Use a distinctive exit code for the encrypted case so the
+        # web layer can detect it and prompt the user for a password.
+        from .importer import EncryptedPdfError
+
+        if isinstance(e, EncryptedPdfError):
+            code = "PASSWORD_WRONG" if e.wrong_password else "PASSWORD_REQUIRED"
+            print(f"ENCRYPTED: {code}", file=sys.stderr)
+            return 4
+        raise
 
     if args.summary:
         n_pages = len(udm["content"]["pages"])

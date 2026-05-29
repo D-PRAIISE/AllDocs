@@ -174,6 +174,10 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Field 'file' missing or not a file" }, { status: 400 });
   }
+  // Optional password for encrypted PDFs. Only forwarded for the PDF
+  // adapter; the others ignore it.
+  const passwordRaw = formData.get("password");
+  const password = typeof passwordRaw === "string" ? passwordRaw : null;
   if (file.size > MAX_FILE_BYTES) {
     return NextResponse.json(
       { error: `File too large; max ${MAX_FILE_BYTES / 1024 / 1024} MB` },
@@ -206,9 +210,36 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
 
   const started = Date.now();
   try {
-    await runImporter(adapter, sourcePath, udmPath, assetsDir, urlPrefix, sourceUrl, pythonPath);
+    await runImporter(
+      adapter,
+      sourcePath,
+      udmPath,
+      assetsDir,
+      urlPrefix,
+      sourceUrl,
+      pythonPath,
+      password
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    // The Python CLI surfaces encrypted-PDF cases via exit code 4
+    // and an "ENCRYPTED: <code>" stderr line so we can prompt the
+    // user for a password instead of dumping a stack trace.
+    if (msg.includes("ENCRYPTED: PASSWORD_REQUIRED")) {
+      return NextResponse.json(
+        {
+          error: "PDF is password-protected — enter the password to open it.",
+          code: "password_required",
+        },
+        { status: 401 }
+      );
+    }
+    if (msg.includes("ENCRYPTED: PASSWORD_WRONG")) {
+      return NextResponse.json(
+        { error: "wrong password — try again.", code: "password_wrong" },
+        { status: 401 }
+      );
+    }
     await recordEvent({
       event: "rejected",
       route: "/api/import",
@@ -249,7 +280,8 @@ function runImporter(
   assetsDir: string,
   urlPrefix: string,
   sourceUrl: string,
-  pythonPath: string
+  pythonPath: string,
+  password: string | null
 ): Promise<void> {
   return new Promise((resolve_, reject) => {
     const env = { ...process.env, PYTHONPATH: pythonPath };
@@ -260,6 +292,9 @@ function runImporter(
     // PDF adapter supports passthrough export. Office adapter does not yet.
     if (adapter.format === "pdf") {
       cliArgs.push("--source-url", sourceUrl);
+      if (password) {
+        cliArgs.push("--password", password);
+      }
     }
     const proc = spawn("python", cliArgs, { env, windowsHide: true });
 

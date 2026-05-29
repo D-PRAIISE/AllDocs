@@ -36,9 +36,16 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  // When the server tells us a PDF needs a password, hold the file in
+  // memory and surface a password input until the user enters it (or
+  // cancels). password === null means "no prompt pending".
+  const [passwordPrompt, setPasswordPrompt] = useState<{
+    file: File;
+    message: string;
+  } | null>(null);
 
   const upload = useCallback(
-    async (file: File) => {
+    async (file: File, password?: string): Promise<void> => {
       setError(null);
       setProgress(`uploading ${file.name} (${formatBytes(file.size)})`);
       setIsUploading(true);
@@ -46,18 +53,38 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       try {
         const formData = new FormData();
         formData.append("file", file);
+        if (password) formData.append("password", password);
         const res = await fetch("/api/import", { method: "POST", body: formData });
         if (!res.ok) {
+          const j = (await res.json().catch(() => null)) as
+            | { error?: string; code?: string }
+            | null;
+          // Encrypted-PDF flow: bring up the password prompt instead
+          // of surfacing the error generically. The user can retry
+          // any number of times — each retry is rate-limited like a
+          // fresh import call.
+          if (j?.code === "password_required" || j?.code === "password_wrong") {
+            setPasswordPrompt({
+              file,
+              message:
+                j.code === "password_wrong"
+                  ? "wrong password — try again"
+                  : "this PDF is password-protected",
+            });
+            setProgress(null);
+            setIsUploading(false);
+            return;
+          }
           track("import_failed", {
             route: "/api/import",
             status: res.status,
             mode: ext,
           });
-          const j = (await res.json().catch(() => null)) as { error?: string } | null;
           throw new Error(j?.error ?? `HTTP ${res.status}`);
         }
         const result = (await res.json()) as UploadResult;
         setProgress(`imported in ${result.ms_taken}ms`);
+        setPasswordPrompt(null);
         onUploaded(result);
       } catch (e) {
         if (e instanceof Error && e.name && e.name !== "Error") {
@@ -128,6 +155,13 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           </div>
           {progress && <div className="font-mono text-xs text-muted">{progress}</div>}
         </div>
+      ) : passwordPrompt ? (
+        <PasswordPrompt
+          message={passwordPrompt.message}
+          filename={passwordPrompt.file.name}
+          onCancel={() => setPasswordPrompt(null)}
+          onSubmit={(pw) => upload(passwordPrompt.file, pw)}
+        />
       ) : (
         <div className="space-y-3">
           <div className="font-mono text-xs uppercase tracking-wider text-muted">
@@ -157,4 +191,57 @@ function formatBytes(n: number): string {
   if (n < 1024) return `${n}B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
   return `${(n / 1024 / 1024).toFixed(1)}MB`;
+}
+
+function PasswordPrompt({
+  message,
+  filename,
+  onSubmit,
+  onCancel,
+}: {
+  message: string;
+  filename: string;
+  onSubmit: (password: string) => void;
+  onCancel: () => void;
+}) {
+  const [pw, setPw] = useState("");
+  return (
+    <div className="space-y-3">
+      <div className="font-mono text-xs uppercase tracking-wider text-warn">
+        {message}
+      </div>
+      <div className="font-mono text-xs text-muted truncate" title={filename}>
+        {filename}
+      </div>
+      <form
+        className="flex items-center justify-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (pw) onSubmit(pw);
+        }}
+      >
+        <input
+          type="password"
+          value={pw}
+          autoFocus
+          onChange={(e) => setPw(e.target.value)}
+          placeholder="password"
+          className="font-mono text-sm px-3 py-2 border border-border bg-input"
+          style={{ color: "#111", caretColor: "#111", background: "#fff", minWidth: 220 }}
+        />
+        <button type="submit" className="btn-primary" disabled={!pw}>
+          unlock
+        </button>
+        <button type="button" onClick={onCancel} className="btn-ghost">
+          cancel
+        </button>
+      </form>
+      <div className="font-mono text-[0.6rem] text-subtle leading-relaxed pt-1 max-w-md mx-auto">
+        AllDocs doesn&apos;t bypass real password protection. If this PDF
+        only restricts editing/printing (no open password), we open it
+        automatically — but this one needs a real password to read its
+        contents.
+      </div>
+    </div>
+  );
 }
