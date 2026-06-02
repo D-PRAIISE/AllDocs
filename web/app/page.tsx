@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { LiveCounters } from "@/components/LiveCounters";
+import { PageViewBeacon } from "@/components/PageViewBeacon";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 
 export const metadata: Metadata = {
@@ -27,8 +29,10 @@ export default function LandingPage() {
     // big tagline, so a slim sticky bar keeps the value-prop visible
     // without eating the scroll area.
     <main className="min-h-screen">
+      <PageViewBeacon page="landing" />
       <SiteHeader compact />
       <Hero />
+      <LiveCounters />
       <FormatGrid />
       <ValueProps />
       <Comparison />

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { HomeClient } from "@/components/HomeClient";
+import { PageViewBeacon } from "@/components/PageViewBeacon";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
 
 export const metadata: Metadata = {
@@ -18,6 +19,7 @@ export const metadata: Metadata = {
 export default function EditPage() {
   return (
     <main className="min-h-screen">
+      <PageViewBeacon page="editor" />
       <SiteHeader compact />
       <div className="mx-auto max-w-6xl px-6 py-8">
         <HomeClient />

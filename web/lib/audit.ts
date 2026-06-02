@@ -24,7 +24,8 @@ export type AuditEvent =
   | "export"
   | "report"
   | "rate-limited"
-  | "rejected";
+  | "rejected"
+  | "visit";
 
 export interface AuditRecord {
   ts: string;

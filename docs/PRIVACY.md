@@ -7,7 +7,7 @@
 | Uploaded files (PDF / DOCX / XLSX / PPTX / MD / HTML / EPUB) for the active editing session | `web/public/uploads/<session_id>/` | **24 hours.** A sweeper runs on each new import (or every 5 minutes) and deletes any session directory whose mtime is older than the TTL. |
 | Extracted assets (images, fonts) for the active session | `web/public/uploads/<session_id>/assets/` | Same as above. |
 | **Bug-report tickets** | `tickets/<ticket_id>/` — NOT public, NOT served | 30 days after the underlying bug is closed. |
-| **Audit log** (event types + hashed IP — no document content) | `audit/<YYYY-MM-DD>.jsonl` | Operational records of imports / exports / bug-reports / rate-limit hits. IP is salted-hashed (16-char prefix) so logs can't be reverse-mapped to identify a user. |
+| **Audit log** (event types + hashed IP — no document content) | `audit/<YYYY-MM-DD>.jsonl` | Operational records of imports / exports / bug-reports / rate-limit hits, plus anonymous page visits (one per browser session). IP is salted-hashed (16-char prefix) so logs can't be reverse-mapped to identify a user. We use this to count unique visitors and documents processed — no cookies, no persistent identifiers, no fingerprinting. |
 
 Anything not listed here is not stored.
 
