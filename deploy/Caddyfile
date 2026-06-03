@@ -1,0 +1,48 @@
+# Caddy reverse proxy for AllDocs, fronted by Cloudflare.
+#
+# Install Caddy, then:
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# TLS strategy with Cloudflare in front (orange-cloud / proxied):
+#   We use a Cloudflare ORIGIN CERTIFICATE — a free 15-year cert
+#   Cloudflare issues for the origin leg. This avoids ACME-behind-a-
+#   proxy headaches entirely (Let's Encrypt's HTTP-01 challenge is
+#   unreliable through Cloudflare's proxy). Set Cloudflare SSL/TLS
+#   mode to "Full (strict)".
+#
+#   Generate it in the Cloudflare dashboard:
+#     SSL/TLS → Origin Server → Create Certificate
+#   Save the cert + key on the server:
+#     /etc/caddy/cf-origin.pem   (certificate)
+#     /etc/caddy/cf-origin.key   (private key)
+#
+# If you'd rather NOT use Cloudflare's proxy (grey-cloud / DNS-only),
+# delete the `tls` line below and Caddy will auto-provision a
+# Let's Encrypt cert. But you then lose Cloudflare's DDoS/caching/edge.
+
+getalldocs.com, www.getalldocs.com {
+    # Origin certificate from Cloudflare (Full (strict) mode).
+    tls /etc/caddy/cf-origin.pem /etc/caddy/cf-origin.key
+
+    # Restore the real visitor IP from Cloudflare's header so AllDocs'
+    # rate limiter + audit log see the client, not Cloudflare's edge.
+    # (AllDocs already reads cf-connecting-ip; this just makes sure
+    # nothing downstream rewrites it.)
+    encode gzip zstd
+
+    reverse_proxy 127.0.0.1:3000 {
+        header_up X-Real-IP {http.request.header.Cf-Connecting-Ip}
+    }
+
+    # Uploaded assets are served by Next.js from /uploads; everything
+    # is proxied, so no special static handling needed here.
+
+    log {
+        output file /var/log/caddy/alldocs.log
+        format json
+    }
+}
+
+# Redirect the apex-less / bare requests if you ever add more hosts.
+# www → apex is handled above by listing both names on one block.

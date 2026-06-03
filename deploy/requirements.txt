@@ -1,0 +1,23 @@
+# Runtime Python dependencies for all three AllDocs adapters.
+# Installed into a venv on the server; the Node app spawns this
+# venv's `python` (see deploy/alldocs.service PATH).
+#
+# Kept in sync with services/*/pyproject.toml [project.dependencies].
+# Dev-only tooling (pytest, ruff, mypy) and test-only deps (pikepdf)
+# are intentionally NOT here — production doesn't run the test suite.
+
+# pdf-adapter
+pymupdf>=1.27.0
+pillow>=11.0.0
+pytesseract>=0.3.10
+
+# office-adapter
+python-docx>=1.1
+pdf2docx>=0.5.6
+openpyxl>=3.1
+python-pptx>=1.0
+
+# text-adapter
+markdown-it-py>=3.0
+beautifulsoup4>=4.12
+bleach>=6.0

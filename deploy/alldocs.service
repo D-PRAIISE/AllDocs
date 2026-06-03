@@ -1,0 +1,62 @@
+# systemd unit for AllDocs.
+#
+# Install:
+#   sudo cp deploy/alldocs.service /etc/systemd/system/alldocs.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now alldocs
+#
+# Logs:
+#   journalctl -u alldocs -f
+#
+# Assumes:
+#   - repo cloned at /opt/alldocs
+#   - python venv at /opt/alldocs/venv (created in SETUP.md)
+#   - `pnpm build` already run in /opt/alldocs/web
+#   - a dedicated unprivileged user `alldocs`
+
+[Unit]
+Description=AllDocs universal document editor
+After=network.target
+
+[Service]
+Type=simple
+User=alldocs
+Group=alldocs
+WorkingDirectory=/opt/alldocs/web
+
+# Put the venv's python first on PATH so the Node app's
+# spawn("python", ...) calls resolve to the venv interpreter that has
+# pymupdf / openpyxl / python-pptx / etc. installed.
+Environment=PATH=/opt/alldocs/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=NODE_ENV=production
+Environment=PORT=3000
+
+# --- AllDocs production config (see .env.example) ---
+# Change the salt so audit-log IP hashes are unique to this instance.
+Environment=ALLDOCS_IP_HASH_SALT=CHANGE_ME_TO_A_RANDOM_STRING
+# Optional overrides (defaults shown):
+# Environment=ALLDOCS_MAX_UPLOAD_MB=200
+# Environment=ALLDOCS_UPLOAD_TTL_HOURS=24
+# Environment=ALLDOCS_TICKET_TTL_DAYS=30
+# Environment=ALLDOCS_RATE_LIMIT_PER_MIN=30
+# Environment=ALLDOCS_RATE_LIMIT_PER_HOUR=300
+# Extra OCR language packs:
+# Environment=ALLDOCS_TESSDATA=/opt/alldocs/tessdata
+
+# `next start` serves the production build on $PORT. We call it
+# directly via the local next binary rather than `pnpm start` so we
+# don't depend on where the global pnpm shim landed. (next is in
+# web/node_modules/.bin after `pnpm install`.)
+ExecStart=/opt/alldocs/web/node_modules/.bin/next start -p 3000
+Restart=on-failure
+RestartSec=5
+
+# Hardening — AllDocs only needs to write inside its own tree
+# (uploads/, tickets/, audit/, telemetry/ live under /opt/alldocs).
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/opt/alldocs
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
