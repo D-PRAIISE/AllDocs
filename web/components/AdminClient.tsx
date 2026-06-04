@@ -10,11 +10,22 @@ interface WindowCounts {
 
 interface AdminStats {
   windows: Record<string, WindowCounts>;
-  exports_by_format: Record<string, number>;
-  reports_total: number;
-  rate_limited_total: number;
-  rejected_total: number;
-  series: { date: string; imports: number; visitors: number }[];
+  funnel: {
+    landing_visitors: number;
+    editor_visitors: number;
+    imports: number;
+    conversion_pct: number;
+  };
+  formats: { imports: Record<string, number>; exports: Record<string, number> };
+  performance: { avg_import_ms: number; avg_export_ms: number };
+  totals: {
+    bytes_processed: number;
+    reports: number;
+    rate_limited: number;
+    rejected: number;
+    error_rate_pct: number;
+  };
+  series: { date: string; imports: number; exports: number; visitors: number }[];
 }
 
 interface Ticket {
@@ -133,14 +144,118 @@ export function AdminClient() {
   // auth === "in"
   return (
     <Shell onLogout={logout}>
+      {stats && <Funnel funnel={stats.funnel} />}
       {stats && <StatsGrid stats={stats} />}
       {stats && stats.series.length > 0 && <Series series={stats.series} />}
+      {stats && <Formats formats={stats.formats} />}
+      {stats && <HealthLine stats={stats} />}
       <TicketList
         tickets={tickets ?? []}
         open={openTicket}
         onToggle={(id) => setOpenTicket((cur) => (cur === id ? null : id))}
       />
     </Shell>
+  );
+}
+
+function Funnel({ funnel }: { funnel: AdminStats["funnel"] }) {
+  const steps: { label: string; value: number }[] = [
+    { label: "landing visitors", value: funnel.landing_visitors },
+    { label: "opened editor", value: funnel.editor_visitors },
+    { label: "imported a doc", value: funnel.imports },
+  ];
+  return (
+    <section className="space-y-3">
+      <div className="label">funnel · all time</div>
+      <div className="grid grid-cols-3 gap-px bg-border border border-border">
+        {steps.map((s) => (
+          <div key={s.label} className="bg-surface p-4 text-center">
+            <div className="font-sans text-3xl font-bold tabular-nums text-fg">
+              {s.value}
+            </div>
+            <div className="mt-1 label">{s.label}</div>
+          </div>
+        ))}
+      </div>
+      <div className="font-mono text-xs text-muted">
+        conversion (landing → imported):{" "}
+        <span className="text-accent font-semibold">{funnel.conversion_pct}%</span>
+      </div>
+    </section>
+  );
+}
+
+function Formats({ formats }: { formats: AdminStats["formats"] }) {
+  const entries = (m: Record<string, number>) =>
+    Object.entries(m).sort((a, b) => b[1] - a[1]);
+  const imp = entries(formats.imports);
+  const exp = entries(formats.exports);
+  if (imp.length === 0 && exp.length === 0) return null;
+  return (
+    <section className="space-y-3">
+      <div className="label">by format</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <FormatList title="imported" rows={imp} />
+        <FormatList title="exported" rows={exp} />
+      </div>
+    </section>
+  );
+}
+
+function FormatList({ title, rows }: { title: string; rows: [string, number][] }) {
+  const max = Math.max(1, ...rows.map((r) => r[1]));
+  return (
+    <div className="border border-border bg-surface p-4">
+      <div className="font-mono text-[0.65rem] uppercase tracking-wider text-muted mb-2">
+        {title}
+      </div>
+      {rows.length === 0 ? (
+        <div className="font-mono text-xs text-subtle">—</div>
+      ) : (
+        <div className="space-y-1.5">
+          {rows.map(([fmt, n]) => (
+            <div key={fmt} className="flex items-center gap-2">
+              <div className="font-mono text-xs text-fg w-14 shrink-0">{fmt}</div>
+              <div className="flex-1 bg-border/40 h-3">
+                <div
+                  className="h-3 bg-accent/80"
+                  style={{ width: `${(n / max) * 100}%` }}
+                />
+              </div>
+              <div className="font-mono text-xs text-muted tabular-nums w-8 text-right">
+                {n}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HealthLine({ stats }: { stats: AdminStats }) {
+  const cards: { label: string; value: string }[] = [
+    { label: "avg import time", value: `${stats.performance.avg_import_ms} ms` },
+    { label: "avg export time", value: `${stats.performance.avg_export_ms} ms` },
+    { label: "data processed", value: formatBytes(stats.totals.bytes_processed) },
+    { label: "bug reports", value: String(stats.totals.reports) },
+    { label: "rate-limited", value: String(stats.totals.rate_limited) },
+    { label: "error rate", value: `${stats.totals.error_rate_pct}%` },
+  ];
+  return (
+    <section className="space-y-3">
+      <div className="label">performance &amp; health</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border border border-border">
+        {cards.map((c) => (
+          <div key={c.label} className="bg-surface p-4">
+            <div className="font-sans text-lg font-bold tabular-nums text-fg">
+              {c.value}
+            </div>
+            <div className="mt-1 label">{c.label}</div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -220,63 +335,68 @@ function StatsGrid({ stats }: { stats: AdminStats }) {
           </tbody>
         </table>
       </div>
-      <div className="font-mono text-xs text-muted flex flex-wrap gap-x-4 gap-y-1">
-        {Object.keys(stats.exports_by_format).length > 0 && (
-          <span>
-            by format:{" "}
-            {Object.entries(stats.exports_by_format)
-              .sort((a, b) => b[1] - a[1])
-              .map(([f, n]) => `${f} ${n}`)
-              .join(" · ")}
-          </span>
-        )}
-        <span>bug reports: {stats.reports_total}</span>
-        <span>rate-limited: {stats.rate_limited_total}</span>
-        {stats.rejected_total > 0 && <span>rejected: {stats.rejected_total}</span>}
-      </div>
     </section>
   );
 }
 
 function Series({ series }: { series: AdminStats["series"] }) {
-  const max = Math.max(1, ...series.map((s) => s.imports));
-  // Show count labels only when there are few enough bars to fit them.
+  // Shared scale across imports + visitors so the two bars are
+  // comparable day to day.
+  const max = Math.max(1, ...series.flatMap((s) => [s.imports, s.visitors]));
   const showLabels = series.length <= 14;
-  const CHART_H = 80;
+  const CHART_H = 90;
+  const VISITOR_COLOR = "#5b9bd5"; // same blue used for selection in the editor
   return (
-    <section className="border border-border bg-surface p-4">
-      <div className="label mb-3">imports per day · last {series.length}</div>
-      {/* Left-aligned, fixed-width bars so a couple of days reads as a
-          couple of bars rather than a full-width slab. Each bar sits in
-          a faint track so zero-import days are still visible. */}
-      <div className="flex items-end gap-1.5" style={{ height: CHART_H }}>
+    <section className="border border-border bg-surface p-4 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div className="label">per day · last {series.length}</div>
+        <div className="flex items-center gap-3 font-mono text-[0.6rem] uppercase tracking-wider">
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-3 h-3 bg-accent/80" /> imports
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="inline-block w-3 h-3" style={{ background: VISITOR_COLOR }} /> visitors
+          </span>
+        </div>
+      </div>
+      {/* Two thin bars per day (imports + visitors) in a shared faint
+          track. Fixed widths so a few days read as a few bars, not a
+          full-width slab. Labels live ABOVE the track in a reserved row
+          so they never overlap the heading or the bars. */}
+      <div className="flex items-end gap-2 overflow-x-auto pt-1">
         {series.map((s) => (
           <div
             key={s.date}
-            className="flex flex-col items-center justify-end"
-            style={{ width: 26 }}
-            title={`${s.date}: ${s.imports} import(s), ${s.visitors} visitor(s)`}
+            className="flex flex-col items-center shrink-0"
+            style={{ width: 34 }}
+            title={`${s.date} — imports: ${s.imports}, exports: ${s.exports}, visitors: ${s.visitors}`}
           >
             {showLabels && (
-              <div className="font-mono text-[0.6rem] text-muted tabular-nums mb-0.5">
-                {s.imports}
+              <div className="font-mono text-[0.55rem] text-muted tabular-nums mb-1 h-3 leading-3">
+                {s.imports}/{s.visitors}
               </div>
             )}
-            {/* track */}
-            <div
-              className="w-full bg-border/40 flex items-end"
-              style={{ height: CHART_H - (showLabels ? 16 : 0) }}
-            >
+            <div className="w-full bg-border/40 flex items-end justify-center gap-0.5" style={{ height: CHART_H }}>
               <div
-                className="w-full bg-accent/80 hover:bg-accent transition-colors"
+                className="bg-accent/80 hover:bg-accent transition-colors"
                 style={{
+                  width: 12,
                   height: `${(s.imports / max) * 100}%`,
                   minHeight: s.imports > 0 ? 2 : 0,
                 }}
               />
+              <div
+                className="transition-opacity hover:opacity-100 opacity-90"
+                style={{
+                  width: 12,
+                  background: VISITOR_COLOR,
+                  height: `${(s.visitors / max) * 100}%`,
+                  minHeight: s.visitors > 0 ? 2 : 0,
+                }}
+              />
             </div>
             {showLabels && (
-              <div className="font-mono text-[0.55rem] text-subtle mt-0.5">
+              <div className="font-mono text-[0.55rem] text-subtle mt-1">
                 {s.date.slice(5)}
               </div>
             )}

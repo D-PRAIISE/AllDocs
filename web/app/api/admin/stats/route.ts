@@ -1,14 +1,18 @@
 /**
- * GET /api/admin/stats — admin-gated, full analytics.
+ * GET /api/admin/stats — admin-gated, comprehensive analytics.
  *
- * One pass over the whole audit log, bucketed into rolling time
- * windows (last hour / 24h / 7d / 30d / 365d / all-time). For each
- * window we count unique visitors (distinct hashed IPs), imports, and
- * exports. Plus a 30-day per-day series for the sparkline and
- * exports-by-format + operational counters.
+ * One pass over the whole audit log produces:
+ *   - windows: rolling-window counts (hour/day/week/month/year/all)
+ *     of unique visitors, imports, exports
+ *   - funnel: landing visitors → editor visitors → imports + the
+ *     conversion %
+ *   - formats: imports-by-format and exports-by-format
+ *   - performance: average import + export processing time (ms)
+ *   - totals: bytes processed, bug reports, rate-limited hits,
+ *     rejections, error rate
+ *   - series: 30-day per-day imports / exports / visitors
  *
- * 30s in-memory cache so opening the dashboard doesn't re-scan the
- * log on every refresh.
+ * 30s in-memory cache so dashboard refreshes don't re-scan the log.
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { readFile, readdir } from "node:fs/promises";
@@ -21,7 +25,6 @@ export const dynamic = "force-dynamic";
 
 const CACHE_TTL_MS = 30 * 1000;
 
-// Rolling windows, in milliseconds. "all" = no lower bound.
 const WINDOWS: { key: string; ms: number | null }[] = [
   { key: "hour", ms: 60 * 60 * 1000 },
   { key: "day", ms: 24 * 60 * 60 * 1000 },
@@ -30,12 +33,6 @@ const WINDOWS: { key: string; ms: number | null }[] = [
   { key: "year", ms: 365 * 24 * 60 * 60 * 1000 },
   { key: "all", ms: null },
 ];
-
-interface WindowCounts {
-  visitors: number;
-  imports: number;
-  exports: number;
-}
 
 let cache: { at: number; data: unknown } | null = null;
 
@@ -61,29 +58,40 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     files = (await readdir(dir)).filter((f) => f.endsWith(".jsonl")).sort();
   } catch {
-    /* no audit dir yet */
+    /* none yet */
   }
 
-  // Per-window accumulators. Visitors tracked as Sets for distinctness.
-  const visitorSets: Record<string, Set<string>> = {};
-  const imports: Record<string, number> = {};
-  const exports: Record<string, number> = {};
+  // Per-window accumulators.
+  const wVisitors: Record<string, Set<string>> = {};
+  const wImports: Record<string, number> = {};
+  const wExports: Record<string, number> = {};
   for (const w of WINDOWS) {
-    visitorSets[w.key] = new Set();
-    imports[w.key] = 0;
-    exports[w.key] = 0;
+    wVisitors[w.key] = new Set();
+    wImports[w.key] = 0;
+    wExports[w.key] = 0;
   }
 
-  const byFormat: Record<string, number> = {};
+  const importsByFormat: Record<string, number> = {};
+  const exportsByFormat: Record<string, number> = {};
+  const landingVisitors = new Set<string>();
+  const editorVisitors = new Set<string>();
+  let importMsSum = 0;
+  let importMsCount = 0;
+  let exportMsSum = 0;
+  let exportMsCount = 0;
+  let bytesProcessed = 0;
+  let importsAll = 0;
   let reports = 0;
   let rateLimited = 0;
   let rejected = 0;
-  // 30-day per-day series for the sparkline.
-  const perDay: Record<string, { imports: number; visitors: Set<string> }> = {};
-  const today = new Date().toISOString().slice(0, 10);
+
+  const perDay: Record<
+    string,
+    { imports: number; exports: number; visitors: Set<string> }
+  > = {};
+  const dayOf = (rec: { ts?: string }) => (rec.ts ? rec.ts.slice(0, 10) : "?");
 
   for (const file of files) {
-    const date = file.replace(/\.jsonl$/, "");
     let text = "";
     try {
       text = await readFile(join(dir, file), "utf-8");
@@ -92,7 +100,15 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
     for (const line of text.split("\n")) {
       if (!line.trim()) continue;
-      let rec: { ts?: string; event?: string; ip_hash?: string; format?: string };
+      let rec: {
+        ts?: string;
+        event?: string;
+        route?: string;
+        ip_hash?: string;
+        format?: string;
+        bytes?: number;
+        ms?: number;
+      };
       try {
         rec = JSON.parse(line);
       } catch {
@@ -100,54 +116,97 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       }
       const ts = rec.ts ? Date.parse(rec.ts) : NaN;
       const age = Number.isFinite(ts) ? now - ts : Infinity;
+      const inW = (w: { ms: number | null }) => w.ms === null || age <= w.ms;
+      const date = dayOf(rec);
+      const bucket = (perDay[date] ??= { imports: 0, exports: 0, visitors: new Set() });
 
-      // Which windows does this event fall inside?
-      const inWindow = (w: { ms: number | null }) => w.ms === null || age <= w.ms;
-
-      if (rec.event === "visit") {
-        if (rec.ip_hash) {
-          for (const w of WINDOWS) if (inWindow(w)) visitorSets[w.key].add(rec.ip_hash);
-          const day = (perDay[date] ??= { imports: 0, visitors: new Set() });
-          day.visitors.add(rec.ip_hash);
-        }
-      } else if (rec.event === "import") {
-        for (const w of WINDOWS) if (inWindow(w)) imports[w.key]++;
-        (perDay[date] ??= { imports: 0, visitors: new Set() }).imports++;
-      } else if (rec.event === "export") {
-        for (const w of WINDOWS) if (inWindow(w)) exports[w.key]++;
-        if (rec.format) byFormat[rec.format] = (byFormat[rec.format] ?? 0) + 1;
-      } else if (rec.event === "report") {
-        reports++;
-      } else if (rec.event === "rate-limited") {
-        rateLimited++;
-      } else if (rec.event === "rejected") {
-        rejected++;
+      switch (rec.event) {
+        case "visit":
+          if (rec.ip_hash) {
+            for (const w of WINDOWS) if (inW(w)) wVisitors[w.key].add(rec.ip_hash);
+            bucket.visitors.add(rec.ip_hash);
+            if (rec.route === "/landing") landingVisitors.add(rec.ip_hash);
+            else if (rec.route === "/editor") editorVisitors.add(rec.ip_hash);
+          }
+          break;
+        case "import":
+          importsAll++;
+          for (const w of WINDOWS) if (inW(w)) wImports[w.key]++;
+          bucket.imports++;
+          if (rec.format) importsByFormat[rec.format] = (importsByFormat[rec.format] ?? 0) + 1;
+          if (typeof rec.bytes === "number") bytesProcessed += rec.bytes;
+          if (typeof rec.ms === "number") {
+            importMsSum += rec.ms;
+            importMsCount++;
+          }
+          break;
+        case "export":
+          for (const w of WINDOWS) if (inW(w)) wExports[w.key]++;
+          bucket.exports++;
+          if (rec.format) exportsByFormat[rec.format] = (exportsByFormat[rec.format] ?? 0) + 1;
+          if (typeof rec.ms === "number") {
+            exportMsSum += rec.ms;
+            exportMsCount++;
+          }
+          break;
+        case "report":
+          reports++;
+          break;
+        case "rate-limited":
+          rateLimited++;
+          break;
+        case "rejected":
+          rejected++;
+          break;
       }
     }
   }
 
-  const windows: Record<string, WindowCounts> = {};
+  const windows: Record<string, { visitors: number; imports: number; exports: number }> = {};
   for (const w of WINDOWS) {
     windows[w.key] = {
-      visitors: visitorSets[w.key].size,
-      imports: imports[w.key],
-      exports: exports[w.key],
+      visitors: wVisitors[w.key].size,
+      imports: wImports[w.key],
+      exports: wExports[w.key],
     };
   }
 
   const series = Object.keys(perDay)
     .sort()
     .slice(-30)
-    .map((d) => ({ date: d, imports: perDay[d].imports, visitors: perDay[d].visitors.size }));
+    .map((d) => ({
+      date: d,
+      imports: perDay[d].imports,
+      exports: perDay[d].exports,
+      visitors: perDay[d].visitors.size,
+    }));
 
+  const totalOps = importsAll + rejected;
   const data = {
     windows,
-    exports_by_format: byFormat,
-    reports_total: reports,
-    rate_limited_total: rateLimited,
-    rejected_total: rejected,
+    funnel: {
+      landing_visitors: landingVisitors.size,
+      editor_visitors: editorVisitors.size,
+      imports: importsAll,
+      // % of landing visitors who ended up importing a document.
+      conversion_pct:
+        landingVisitors.size > 0
+          ? Math.round((importsAll / landingVisitors.size) * 1000) / 10
+          : 0,
+    },
+    formats: { imports: importsByFormat, exports: exportsByFormat },
+    performance: {
+      avg_import_ms: importMsCount ? Math.round(importMsSum / importMsCount) : 0,
+      avg_export_ms: exportMsCount ? Math.round(exportMsSum / exportMsCount) : 0,
+    },
+    totals: {
+      bytes_processed: bytesProcessed,
+      reports,
+      rate_limited: rateLimited,
+      rejected,
+      error_rate_pct: totalOps > 0 ? Math.round((rejected / totalOps) * 1000) / 10 : 0,
+    },
     series,
-    today,
     generated_at: new Date().toISOString(),
   };
   cache = { at: now, data };
