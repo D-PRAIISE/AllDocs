@@ -34,6 +34,10 @@ Environment=PORT=3000
 # --- AllDocs production config (see .env.example) ---
 # Change the salt so audit-log IP hashes are unique to this instance.
 Environment=ALLDOCS_IP_HASH_SALT=CHANGE_ME_TO_A_RANDOM_STRING
+# Admin dashboard password (/admin). Leave unset to DISABLE admin
+# entirely (every admin route returns 503). Set to a long random
+# string to enable the dashboard.
+Environment=ALLDOCS_ADMIN_PASSWORD=CHANGE_ME_TO_AN_ADMIN_PASSWORD
 # Optional overrides (defaults shown):
 # Environment=ALLDOCS_MAX_UPLOAD_MB=200
 # Environment=ALLDOCS_UPLOAD_TTL_HOURS=24
