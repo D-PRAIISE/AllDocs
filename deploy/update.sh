@@ -20,8 +20,11 @@ set -euo pipefail
 
 HOST="${ALLDOCS_HOST:-167.233.29.231}"
 KEY="${ALLDOCS_KEY:-$HOME/.ssh/alldocs_hetzner}"
-SSH="ssh -i $KEY -o StrictHostKeyChecking=accept-new root@$HOST"
 TARBALL="alldocs-deploy.$(date +%s).tar.gz"
+
+# Functions (not string vars) so a space in $KEY / $HOME doesn't
+# word-split and break the command.
+ssh_run() { ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "root@$HOST" "$@"; }
 
 echo "==> Packaging working tree..."
 tar czf "/tmp/$TARBALL" \
@@ -47,7 +50,7 @@ rm -f "/tmp/$TARBALL"
 
 echo "==> Extracting + rebuilding on server..."
 # shellcheck disable=SC2087
-$SSH bash -s <<REMOTE
+ssh_run bash -s <<REMOTE
 set -euo pipefail
 tar xzf "/tmp/$TARBALL" -C /opt/alldocs
 rm -f "/tmp/$TARBALL"
