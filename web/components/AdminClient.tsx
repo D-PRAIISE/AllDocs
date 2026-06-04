@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+interface WindowCounts {
+  visitors: number;
+  imports: number;
+  exports: number;
+}
+
 interface AdminStats {
-  visitors_all_time: number;
-  visitors_today: number;
-  imports_total: number;
-  exports_total: number;
+  windows: Record<string, WindowCounts>;
+  exports_by_format: Record<string, number>;
   reports_total: number;
   rate_limited_total: number;
   rejected_total: number;
-  exports_by_format: Record<string, number>;
   series: { date: string; imports: number; visitors: number }[];
 }
 
@@ -168,36 +171,69 @@ function Shell({
   );
 }
 
+const WINDOW_ROWS: { key: string; label: string }[] = [
+  { key: "hour", label: "past hour" },
+  { key: "day", label: "past 24 hours" },
+  { key: "week", label: "past 7 days" },
+  { key: "month", label: "past 30 days" },
+  { key: "year", label: "past year" },
+  { key: "all", label: "all time" },
+];
+
 function StatsGrid({ stats }: { stats: AdminStats }) {
-  const cards: { label: string; value: number | string }[] = [
-    { label: "visitors (all time)", value: stats.visitors_all_time },
-    { label: "visitors (today)", value: stats.visitors_today },
-    { label: "documents imported", value: stats.imports_total },
-    { label: "documents exported", value: stats.exports_total },
-    { label: "bug reports", value: stats.reports_total },
-    { label: "rate-limited hits", value: stats.rate_limited_total },
-  ];
+  const w = stats.windows ?? {};
   return (
-    <section>
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border border border-border">
-        {cards.map((c) => (
-          <div key={c.label} className="bg-surface p-4">
-            <div className="font-sans text-2xl font-bold tabular-nums text-fg">
-              {c.value}
-            </div>
-            <div className="mt-1 label">{c.label}</div>
-          </div>
-        ))}
+    <section className="space-y-3">
+      <div className="label">activity by time window</div>
+      <div className="border border-border bg-surface overflow-x-auto">
+        <table className="w-full font-mono text-sm">
+          <thead>
+            <tr className="border-b border-border bg-elevated text-left">
+              <th className="px-4 py-2 font-mono text-[0.65rem] uppercase tracking-wider text-muted">
+                window
+              </th>
+              <th className="px-4 py-2 font-mono text-[0.65rem] uppercase tracking-wider text-muted text-right">
+                visitors
+              </th>
+              <th className="px-4 py-2 font-mono text-[0.65rem] uppercase tracking-wider text-muted text-right">
+                imported
+              </th>
+              <th className="px-4 py-2 font-mono text-[0.65rem] uppercase tracking-wider text-muted text-right">
+                exported
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {WINDOW_ROWS.map((row, i) => {
+              const c = w[row.key] ?? { visitors: 0, imports: 0, exports: 0 };
+              return (
+                <tr key={row.key} className={i % 2 ? "" : "bg-bg/30"}>
+                  <td className="px-4 py-2 text-fg/85">{row.label}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-fg font-semibold">
+                    {c.visitors}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums text-fg">{c.imports}</td>
+                  <td className="px-4 py-2 text-right tabular-nums text-fg">{c.exports}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-      {Object.keys(stats.exports_by_format).length > 0 && (
-        <div className="mt-3 font-mono text-xs text-muted">
-          exports by format:{" "}
-          {Object.entries(stats.exports_by_format)
-            .sort((a, b) => b[1] - a[1])
-            .map(([f, n]) => `${f} ${n}`)
-            .join(" · ")}
-        </div>
-      )}
+      <div className="font-mono text-xs text-muted flex flex-wrap gap-x-4 gap-y-1">
+        {Object.keys(stats.exports_by_format).length > 0 && (
+          <span>
+            by format:{" "}
+            {Object.entries(stats.exports_by_format)
+              .sort((a, b) => b[1] - a[1])
+              .map(([f, n]) => `${f} ${n}`)
+              .join(" · ")}
+          </span>
+        )}
+        <span>bug reports: {stats.reports_total}</span>
+        <span>rate-limited: {stats.rate_limited_total}</span>
+        {stats.rejected_total > 0 && <span>rejected: {stats.rejected_total}</span>}
+      </div>
     </section>
   );
 }
