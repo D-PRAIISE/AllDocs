@@ -240,17 +240,47 @@ function StatsGrid({ stats }: { stats: AdminStats }) {
 
 function Series({ series }: { series: AdminStats["series"] }) {
   const max = Math.max(1, ...series.map((s) => s.imports));
+  // Show count labels only when there are few enough bars to fit them.
+  const showLabels = series.length <= 14;
+  const CHART_H = 80;
   return (
     <section className="border border-border bg-surface p-4">
-      <div className="label mb-3">imports · last {series.length} days</div>
-      <div className="flex items-end gap-1" style={{ height: 80 }}>
+      <div className="label mb-3">imports per day · last {series.length}</div>
+      {/* Left-aligned, fixed-width bars so a couple of days reads as a
+          couple of bars rather than a full-width slab. Each bar sits in
+          a faint track so zero-import days are still visible. */}
+      <div className="flex items-end gap-1.5" style={{ height: CHART_H }}>
         {series.map((s) => (
           <div
             key={s.date}
-            className="flex-1 bg-accent/70 hover:bg-accent transition-colors"
-            style={{ height: `${(s.imports / max) * 100}%`, minHeight: 1 }}
-            title={`${s.date}: ${s.imports} imports, ${s.visitors} visitors`}
-          />
+            className="flex flex-col items-center justify-end"
+            style={{ width: 26 }}
+            title={`${s.date}: ${s.imports} import(s), ${s.visitors} visitor(s)`}
+          >
+            {showLabels && (
+              <div className="font-mono text-[0.6rem] text-muted tabular-nums mb-0.5">
+                {s.imports}
+              </div>
+            )}
+            {/* track */}
+            <div
+              className="w-full bg-border/40 flex items-end"
+              style={{ height: CHART_H - (showLabels ? 16 : 0) }}
+            >
+              <div
+                className="w-full bg-accent/80 hover:bg-accent transition-colors"
+                style={{
+                  height: `${(s.imports / max) * 100}%`,
+                  minHeight: s.imports > 0 ? 2 : 0,
+                }}
+              />
+            </div>
+            {showLabels && (
+              <div className="font-mono text-[0.55rem] text-subtle mt-0.5">
+                {s.date.slice(5)}
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </section>
