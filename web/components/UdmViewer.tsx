@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   type Document,
@@ -11,6 +11,8 @@ import {
   type SlidesContent,
   lengthToPx,
 } from "@/lib/udm";
+import { fitScaleForWidth, useIsMobile } from "@/lib/use-is-mobile";
+import { usePinchZoom } from "@/lib/use-pinch-zoom";
 import { FixedPageView } from "./FixedPageView";
 import { FlowContentView } from "./FlowContentView";
 import { SheetView } from "./SheetView";
@@ -24,6 +26,29 @@ interface UdmViewerProps {
 export function UdmViewer({ doc }: UdmViewerProps) {
   const [scale, setScale] = useState(1);
   const [layout, setLayout] = useState<"list" | "grid">("list");
+  const isMobile = useIsMobile();
+
+  // First page width in px (96 DPI), used by fit-to-width.
+  const firstPageWidthPx =
+    doc.mode === "fixed"
+      ? lengthToPx((doc.content as FixedContent).pages[0]?.width ?? { value: 0, unit: "px" })
+      : 0;
+  const fitToWidth = () => {
+    if (firstPageWidthPx > 0) setScale(fitScaleForWidth(firstPageWidthPx));
+  };
+
+  // On a phone, default to fitting the page to the screen so the
+  // document is readable instead of ~2x too wide. Runs once per doc.
+  const didFit = useRef(false);
+  useEffect(() => {
+    didFit.current = false;
+  }, [doc]);
+  useEffect(() => {
+    if (didFit.current || !isMobile || firstPageWidthPx <= 0) return;
+    setScale(fitScaleForWidth(firstPageWidthPx));
+    didFit.current = true;
+  }, [isMobile, firstPageWidthPx]);
+
   return (
     <div className="space-y-4">
       <FontFaceStyles resources={doc.resources} />
@@ -31,6 +56,7 @@ export function UdmViewer({ doc }: UdmViewerProps) {
         doc={doc}
         scale={scale}
         onScaleChange={setScale}
+        onFit={fitToWidth}
         layout={layout}
         onLayoutChange={(l) => {
           setLayout(l);
@@ -66,15 +92,19 @@ function ContentRenderer({
   doc,
   scale,
   onScaleChange,
+  onFit,
   layout,
   onLayoutChange,
 }: {
   doc: Document;
   scale: number;
   onScaleChange: (s: number) => void;
+  onFit: () => void;
   layout: "list" | "grid";
   onLayoutChange: (l: "list" | "grid") => void;
 }) {
+  const pinchRef = useRef<HTMLDivElement>(null);
+  usePinchZoom(pinchRef, scale, onScaleChange);
   if (doc.mode === "fixed") {
     const fixed = doc.content as FixedContent;
     return (
@@ -82,10 +112,12 @@ function ContentRenderer({
         <ScaleControl
           scale={scale}
           onScaleChange={onScaleChange}
+          onFit={onFit}
           layout={layout}
           onLayoutChange={onLayoutChange}
         />
         <div
+          ref={pinchRef}
           className={
             (layout === "grid"
               ? "flex flex-wrap gap-6 [justify-content:safe_center]"
@@ -95,7 +127,9 @@ function ContentRenderer({
           // `safe center`: centre children when they fit, fall back to
           // left/top when they don't. Without it, zooming a wide page
           // pushes overflow off the left where scrollbars can't reach.
-          style={{ maxHeight: "75vh" }}
+          // touch-action pan-x/pan-y: one finger scrolls, two-finger
+          // pinch is handled by usePinchZoom (zooms the doc, not the page).
+          style={{ maxHeight: "75vh", touchAction: "pan-x pan-y" }}
         >
           {fixed.pages.map((page) => (
             <div key={page.number}>
@@ -137,24 +171,28 @@ function ContentRenderer({
 function ScaleControl({
   scale,
   onScaleChange,
+  onFit,
   layout,
   onLayoutChange,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
+  onFit: () => void;
   layout: "list" | "grid";
   onLayoutChange: (l: "list" | "grid") => void;
 }) {
   const cls = (active: boolean) =>
-    `font-mono text-xs px-2 py-1 border transition-colors ${
+    `font-mono text-xs px-2 py-1 border transition-colors shrink-0 ${
       active
         ? "bg-accent text-accent-fg border-accent"
         : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
     }`;
+  // On phones the controls scroll in a single row instead of wrapping
+  // into several rows that eat the screen above the document.
   return (
-    <div className="flex items-center gap-1 mb-3 flex-wrap">
-      <ZoomControl scale={scale} onScaleChange={onScaleChange} />
-      <span className="label mx-2">view</span>
+    <div className="flex items-center gap-1 mb-3 flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-visible">
+      <ZoomControl scale={scale} onScaleChange={onScaleChange} onFit={onFit} />
+      <span className="label mx-2 shrink-0">view</span>
       <button onClick={() => onLayoutChange("list")} className={cls(layout === "list")}>
         ☰ list
       </button>

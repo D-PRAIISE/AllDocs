@@ -20,6 +20,8 @@ import {
   colorRefToCss,
   lengthToPx,
 } from "@/lib/udm";
+import { fitScaleForWidth, useIsMobile } from "@/lib/use-is-mobile";
+import { usePinchZoom } from "@/lib/use-pinch-zoom";
 
 type FamilyClass = "sans" | "serif" | "mono";
 
@@ -290,6 +292,23 @@ function pickImageFile(): Promise<PickedImage | null> {
 export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasProps) {
   const fixed = doc.content as FixedContent;
   const [scale, setScale] = useState(1);
+  const isMobile = useIsMobile();
+  // Fit the first page to the screen width (default on mobile, manual
+  // "fit" button everywhere) so phone users don't get a page ~2x wider
+  // than the viewport.
+  const firstPageWidthPx = lengthToPx(fixed.pages[0]?.width ?? { value: 0, unit: "px" });
+  const fitToWidth = useCallback(() => {
+    if (firstPageWidthPx > 0) setScale(fitScaleForWidth(firstPageWidthPx));
+  }, [firstPageWidthPx]);
+  const didFit = useRef(false);
+  useEffect(() => {
+    if (didFit.current || !isMobile || firstPageWidthPx <= 0) return;
+    setScale(fitScaleForWidth(firstPageWidthPx));
+    didFit.current = true;
+  }, [isMobile, firstPageWidthPx]);
+  // Two-finger pinch zooms the document; one finger still scrolls.
+  const pinchRef = useRef<HTMLDivElement>(null);
+  usePinchZoom(pinchRef, scale, setScale);
   // First-run coaching banner. Starts hidden to avoid an SSR/hydration
   // mismatch, then shows on mount unless the user dismissed it before
   // (persisted in localStorage so returning users aren't nagged).
@@ -1311,6 +1330,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       <EditorHeader
         scale={scale}
         onScaleChange={setScale}
+        onFit={fitToWidth}
         mode={mode}
         onToggleMode={toggleMode}
         layout={layout}
@@ -1365,6 +1385,13 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
           >
             ✕ dismiss
           </button>
+        </div>
+      )}
+      {isMobile && (
+        <div className="border border-border bg-elevated/40 px-3 py-2 font-sans text-xs text-muted leading-relaxed">
+          <span className="text-fg">On a phone</span> you can view, zoom, fill
+          fields, and edit text. For precise work — moving and resizing images,
+          drawing — a larger screen works best.
         </div>
       )}
       <PageOpsPanel doc={doc} onChange={onChange} />
@@ -1422,6 +1449,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         />
       ) : null}
       <div
+        ref={pinchRef}
         className={
           (layout === "grid"
             ? "flex flex-wrap gap-6 [justify-content:safe_center]"
@@ -1432,7 +1460,9 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         // left/top when they don't. Without this, zooming a fixed-mode
         // page wider than the viewport pushes half the overflow off the
         // left edge where browser scrollbars can't reach.
-        style={{ maxHeight: "75vh" }}
+        // touch-action pan-x/pan-y: one finger scrolls; two-finger pinch
+        // is captured by usePinchZoom to zoom the document.
+        style={{ maxHeight: "75vh", touchAction: "pan-x pan-y" }}
       >
         {fixed.pages.map((page, pageIdx) => (
           <div
@@ -2698,7 +2728,9 @@ function ResizeHandles({
 }) {
   const pxToPt = (px: number) => (px / scale) * (72 / 96);
 
-  const SIZE = 10;
+  // Bigger, grabbable handles on touch screens; tight on desktop.
+  const isMobile = useIsMobile();
+  const SIZE = isMobile ? 22 : 10;
   const HALF = SIZE / 2;
   // Minimum size in canvas pixels — prevents the box collapsing to a
   // point where the handles become un-grabbable.
@@ -3219,6 +3251,7 @@ const MODE_HINT: Record<EditorMode, string> = {
 function EditorHeader({
   scale,
   onScaleChange,
+  onFit,
   mode,
   onToggleMode,
   layout,
@@ -3236,6 +3269,7 @@ function EditorHeader({
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
+  onFit: () => void;
   mode: EditorMode;
   onToggleMode: (m: EditorMode) => void;
   layout: "list" | "grid";
@@ -3252,7 +3286,7 @@ function EditorHeader({
   onToggleTips: () => void;
 }) {
   const modeBtn = (active: boolean) =>
-    `font-mono text-xs px-2 py-1 border transition-colors ${
+    `font-mono text-xs px-2 py-1 border transition-colors shrink-0 whitespace-nowrap ${
       active
         ? "bg-accent text-accent-fg border-accent"
         : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
@@ -3291,9 +3325,11 @@ function EditorHeader({
   ];
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">
-      <div className="flex items-center gap-1 flex-wrap">
-        <ZoomControl scale={scale} onScaleChange={onScaleChange} />
-        <span className="label mx-2">view</span>
+      {/* On phones the tool row scrolls horizontally in a single line
+          instead of wrapping into several rows above the document. */}
+      <div className="flex items-center gap-1 flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-visible max-w-full">
+        <ZoomControl scale={scale} onScaleChange={onScaleChange} onFit={onFit} />
+        <span className="label mx-2 shrink-0">view</span>
         <button
           onClick={() => onLayoutChange("list")}
           className={modeBtn(layout === "list")}
@@ -3309,7 +3345,10 @@ function EditorHeader({
           ▦ grid
         </button>
         {toolGroups.flatMap((g) => [
-          <span key={`grp-${g.group}`} className="label mx-2 border-l border-border pl-2">
+          <span
+            key={`grp-${g.group}`}
+            className="label mx-2 border-l border-border pl-2 shrink-0 whitespace-nowrap"
+          >
             {g.group}
           </span>,
           ...g.items.map((t) => (

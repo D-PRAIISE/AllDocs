@@ -12,9 +12,13 @@
 export function ZoomControl({
   scale,
   onScaleChange,
+  onFit,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
+  /** When provided, renders a "fit" button that scales a page to the
+   *  viewport width — the default zoom on mobile, handy on desktop too. */
+  onFit?: () => void;
 }) {
   const clamp = (s: number) => Math.max(0.1, Math.min(4, Math.round(s * 100) / 100));
   const nudgeBtn =
@@ -57,6 +61,16 @@ export function ZoomControl({
       >
         {Math.round(scale * 100)}%
       </button>
+      {onFit ? (
+        <button
+          className="font-mono text-xs px-1.5 h-6 border border-border text-muted hover:text-fg hover:border-fg"
+          onClick={onFit}
+          title="fit page to screen width"
+          aria-label="Fit page to screen width"
+        >
+          fit
+        </button>
+      ) : null}
     </div>
   );
 }

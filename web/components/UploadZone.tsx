@@ -218,8 +218,14 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           <div className="font-mono text-xs uppercase tracking-wider text-muted">
             drop a file
           </div>
-          <div className="font-sans text-lg text-fg">
-            PDF · DOCX · XLSX · PPTX · Markdown · HTML · EPUB · images
+          <div className="font-sans text-base sm:text-lg text-fg">
+            {/* Full technical list on desktop; a grouped one-liner on
+                mobile so it doesn't wrap into 2-3 lines in the box.
+                The picker accepts every format either way. */}
+            <span className="sm:hidden">PDF · Office · ebooks · images</span>
+            <span className="hidden sm:inline">
+              PDF · DOCX · XLSX · PPTX · Markdown · HTML · EPUB · images
+            </span>
           </div>
           <div className="font-mono text-[0.65rem] text-subtle">or</div>
           <label className="btn-primary inline-flex cursor-pointer">
