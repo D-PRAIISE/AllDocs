@@ -25,18 +25,32 @@ getalldocs.com, www.getalldocs.com {
     # Origin certificate from Cloudflare (Full (strict) mode).
     tls /etc/caddy/cf-origin.pem /etc/caddy/cf-origin.key
 
-    # Restore the real visitor IP from Cloudflare's header so AllDocs'
-    # rate limiter + audit log see the client, not Cloudflare's edge.
-    # (AllDocs already reads cf-connecting-ip; this just makes sure
-    # nothing downstream rewrites it.)
     encode gzip zstd
 
-    reverse_proxy 127.0.0.1:3000 {
-        header_up X-Real-IP {http.request.header.Cf-Connecting-Ip}
+    # Serve uploaded session files (the imported doc's UDM JSON +
+    # extracted image/font assets) straight from disk. This MUST be
+    # Caddy, not Next: `next start` only serves public/ files that
+    # existed at build time, so runtime-written uploads 404 if proxied.
+    # handle_path strips the /uploads prefix, so
+    #   /uploads/<id>/doc.udm.json
+    # resolves to
+    #   /opt/alldocs/web/public/uploads/<id>/doc.udm.json
+    handle_path /uploads/* {
+        root * /opt/alldocs/web/public/uploads
+        file_server
+        # Match the app's privacy posture: these are ephemeral session
+        # files, don't let intermediaries cache them.
+        header Cache-Control "no-store"
     }
 
-    # Uploaded assets are served by Next.js from /uploads; everything
-    # is proxied, so no special static handling needed here.
+    # Everything else → the Next.js app.
+    handle {
+        # Restore the real visitor IP from Cloudflare's header so the
+        # rate limiter + audit log see the client, not the edge.
+        reverse_proxy 127.0.0.1:3000 {
+            header_up X-Real-IP {http.request.header.Cf-Connecting-Ip}
+        }
+    }
 
     log {
         output file /var/log/caddy/alldocs.log
