@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { EditorPreviewMock } from "@/components/EditorPreviewMock";
 import { LiveCounters } from "@/components/LiveCounters";
 import { PageViewBeacon } from "@/components/PageViewBeacon";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
@@ -45,38 +46,47 @@ export default function LandingPage() {
 function Hero() {
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-6xl px-6 py-20 sm:py-28">
-        <div className="font-mono text-[0.65rem] uppercase tracking-wider text-accent mb-6">
-          free · no signup · no tracking
+      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 pt-6 sm:pt-8 pb-16 sm:pb-24 grid lg:grid-cols-2 gap-12 lg:gap-10 items-center">
+        {/* Left: the pitch */}
+        <div>
+          <div className="font-mono text-[0.65rem] uppercase tracking-wider text-accent mb-6">
+            free · no signup · no tracking
+          </div>
+          <h1 className="font-sans text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.05]">
+            Edit any document.{" "}
+            <span className="text-muted">Without an account.</span>
+          </h1>
+          <p className="mt-6 max-w-xl font-sans text-lg text-fg/80 leading-relaxed">
+            PDF, Word, Excel, PowerPoint, Markdown, HTML, EPUB, and
+            scanned images — one editor, every format. Drop a file,
+            edit it right in your browser, download it back.
+          </p>
+          <div className="mt-9 flex flex-wrap items-center gap-3">
+            <Link
+              href="/edit"
+              className="inline-flex items-center font-mono text-sm uppercase tracking-wider px-6 py-3 bg-accent text-accent-fg border border-accent hover:bg-accent-hover transition-colors"
+            >
+              try AllDocs free →
+            </Link>
+            <Link
+              href="#how-it-works"
+              className="inline-flex items-center font-mono text-sm uppercase tracking-wider px-6 py-3 border border-border-strong text-fg hover:border-fg transition-colors"
+            >
+              how it works
+            </Link>
+          </div>
+          <div className="mt-10 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-xl">
+            <Stat number="0" label="signups" />
+            <Stat number="8+" label="formats" />
+            <Stat number="24h" label="auto-delete" />
+            <Stat number="200MB" label="upload limit" />
+          </div>
         </div>
-        <h1 className="font-sans text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight leading-[1.05] max-w-3xl">
-          Edit any document.{" "}
-          <span className="text-muted">Without an account.</span>
-        </h1>
-        <p className="mt-6 max-w-2xl font-sans text-lg sm:text-xl text-fg/85 leading-relaxed">
-          PDF, DOCX, XLSX, PPTX, Markdown, HTML, EPUB, and scanned
-          images — one editor, every format. Drop a file, edit it
-          right in your browser, download it back.
-        </p>
-        <div className="mt-10 flex flex-wrap items-center gap-4">
-          <Link
-            href="/edit"
-            className="inline-flex items-center font-mono text-sm uppercase tracking-wider px-6 py-3 bg-accent text-accent-fg border border-accent hover:bg-accent-hover transition-colors"
-          >
-            try AllDocs free →
-          </Link>
-          <Link
-            href="#how-it-works"
-            className="inline-flex items-center font-mono text-sm uppercase tracking-wider px-6 py-3 border border-border-strong text-fg hover:border-fg transition-colors"
-          >
-            how it works
-          </Link>
-        </div>
-        <div className="mt-12 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-2xl font-mono text-xs text-muted">
-          <Stat number="0" label="signups" />
-          <Stat number="8+" label="formats" />
-          <Stat number="24h" label="auto-delete" />
-          <Stat number="200MB" label="upload limit" />
+
+        {/* Right: a glimpse of the product. Hidden on the smallest
+            screens where it would just push the CTA below the fold. */}
+        <div className="hidden sm:block">
+          <EditorPreviewMock />
         </div>
       </div>
     </section>
@@ -89,7 +99,9 @@ function Stat({ number, label }: { number: string; label: string }) {
       <div className="font-sans text-xl text-fg font-semibold tabular-nums">
         {number}
       </div>
-      <div className="uppercase tracking-wider">{label}</div>
+      <div className="font-mono text-[0.6rem] uppercase tracking-wider text-muted mt-0.5">
+        {label}
+      </div>
     </div>
   );
 }
@@ -107,7 +119,7 @@ function FormatGrid() {
   ];
   return (
     <section className="border-b border-border" id="formats">
-      <div className="mx-auto max-w-6xl px-6 py-16">
+      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
         <div className="label mb-2">supported formats</div>
         <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
           One editor. Every common document format.
@@ -135,7 +147,7 @@ function FormatGrid() {
 function ValueProps() {
   return (
     <section className="border-b border-border" id="how-it-works">
-      <div className="mx-auto max-w-6xl px-6 py-16">
+      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
         <div className="label mb-2">how it works</div>
         <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
           Drop. Edit. Download. Done.
@@ -222,13 +234,13 @@ function Comparison() {
   ];
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-6xl px-6 py-16">
-        <div className="label mb-2">vs. the incumbents</div>
+      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+        <div className="label mb-2">how we&apos;re different</div>
         <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
           A serious tool, given away free.
         </h2>
         <div className="border border-border bg-surface overflow-x-auto">
-          <table className="w-full font-mono text-sm">
+          <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-elevated">
                 <th className="text-left px-4 py-3 font-mono text-xs uppercase tracking-wider text-muted">
@@ -238,11 +250,11 @@ function Comparison() {
                   AllDocs
                 </th>
                 <th className="text-left px-4 py-3 font-mono text-xs uppercase tracking-wider text-muted">
-                  Acrobat / Smallpdf / etc.
+                  Typical online tools
                 </th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="font-sans">
               {rows.map((r, i) => (
                 <tr key={i} className={i % 2 ? "" : "bg-bg/40"}>
                   <td className="px-4 py-3 text-fg/85">{r.feature}</td>
@@ -261,7 +273,7 @@ function Comparison() {
 function FinalCta() {
   return (
     <section>
-      <div className="mx-auto max-w-6xl px-6 py-20 text-center">
+      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-20 text-center">
         <h2 className="font-sans text-3xl sm:text-5xl font-bold tracking-tight max-w-3xl mx-auto leading-tight">
           Edit your first document.
           <br />

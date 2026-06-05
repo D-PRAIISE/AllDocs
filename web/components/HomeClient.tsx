@@ -11,7 +11,7 @@ import { FlowEditor } from "./FlowEditor";
 import { ReportProblemModal } from "./ReportProblemModal";
 import { SheetEditor } from "./SheetView";
 import { SlideEditor } from "./SlideView";
-import { DocumentSummary, FontFaceStyles, UdmViewer } from "./UdmViewer";
+import { FontFaceStyles, UdmViewer } from "./UdmViewer";
 import { UploadZone } from "./UploadZone";
 
 interface UploadResult {
@@ -25,6 +25,32 @@ interface UploadResult {
 }
 
 const DEFAULT_SRC = "/synthetic.udm.json";
+
+/** One label/value cell in the session box's at-a-glance details. */
+function GlanceField({
+  label,
+  value,
+  accent,
+  span2,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  span2?: boolean;
+}) {
+  return (
+    <div className={span2 ? "col-span-2 sm:col-span-3 min-w-0" : "min-w-0"}>
+      <dt className="font-mono text-[0.6rem] uppercase tracking-wider text-muted">
+        {label}
+      </dt>
+      <dd
+        className={`mt-0.5 font-mono text-xs truncate ${accent ? "text-accent" : "text-fg"}`}
+      >
+        {value}
+      </dd>
+    </div>
+  );
+}
 
 // Placeholder while no doc is loaded — the history hook needs a value
 // to initialise with even before fetch resolves.
@@ -265,11 +291,45 @@ export function HomeClient() {
   // TipTap's own undo on its toolbar.
   const showHistoryControls = isEditing && doc?.mode === "fixed";
 
+  // Full "at a glance" details for the middle of the session box — this
+  // is the old standalone DocumentSummary box, relocated here so the
+  // stretch space carries real info instead of a void. Filename is
+  // deliberately omitted: it already lives in the info row above.
+  const glance = (() => {
+    if (!doc) return null;
+    const content = doc.content as unknown as Record<string, unknown>;
+    const len = (k: string) =>
+      Array.isArray(content[k]) ? (content[k] as unknown[]).length : 0;
+    let n = len("pages");
+    let unit = "pages";
+    if (doc.mode === "slides") (n = len("slides")), (unit = "slides");
+    else if (doc.mode === "sheet") (n = len("sheets")), (unit = "sheets");
+    else if (doc.mode === "flow") (n = len("blocks")), (unit = "blocks");
+    const mime = doc.metadata.source_format?.mime ?? "";
+    return {
+      n,
+      unit,
+      images: doc.resources.images.length,
+      fonts: doc.resources.fonts.length,
+      subsets: doc.resources.fonts.filter((f) => f._meta?.subset).length,
+      mode: doc.mode,
+      source: mime.split("/").pop() || mime || "—",
+      udm: String(doc.udm_version ?? "—"),
+      producer: doc.metadata.source_format?.producer ?? null,
+    };
+  })();
+
   return (
     <div className="space-y-6">
+      {/* Import box + the session/actions box sit side by side on
+          desktop (stack on mobile). items-stretch makes them equal
+          height; the compacted dropzone centers its content so they
+          read as a balanced pair rather than a tall box next to a
+          short one. */}
+      <div className="grid lg:grid-cols-2 gap-6 items-stretch">
       <UploadZone onUploaded={handleUploaded} />
 
-      <div className="border border-border bg-surface">
+      <div className="border border-border bg-surface flex flex-col h-full">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 border-b border-border">
           <div className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">
             {meta ? "session" : "default"}
@@ -280,11 +340,7 @@ export function HomeClient() {
               <span className="text-muted">·</span>{" "}
               <span className="text-accent">{meta.format}</span>{" "}
               <span className="text-muted">·</span>{" "}
-              {(meta.size / 1024).toFixed(1)}KB{" "}
-              <span className="text-muted">·</span>{" "}
-              {meta.ms_taken}ms{" "}
-              <span className="text-muted">·</span>{" "}
-              <span className="text-subtle">{meta.session_id.slice(0, 8)}</span>
+              {(meta.size / 1024).toFixed(1)}KB
             </div>
           ) : (
             <div className="font-mono text-xs text-muted">
@@ -301,7 +357,34 @@ export function HomeClient() {
           )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+        {/* Middle: the document's full at-a-glance details (relocated
+            from the old standalone summary box). flex-1 fills the
+            stretch space so the box reads as header / body / footer. */}
+        <div className="flex-1 flex items-center px-4 py-5">
+          {glance ? (
+            <dl className="w-full grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+              <GlanceField label={glance.unit} value={String(glance.n)} />
+              <GlanceField label="images" value={String(glance.images)} />
+              <GlanceField label="mode" value={glance.mode} accent />
+              <GlanceField label="source" value={glance.source} />
+              <GlanceField
+                label="fonts"
+                value={`${glance.fonts}${glance.subsets ? ` · ${glance.subsets} subset` : ""}`}
+              />
+              <GlanceField label="udm" value={glance.udm} />
+              {glance.producer && (
+                <GlanceField label="producer" value={glance.producer} span2 />
+              )}
+            </dl>
+          ) : (
+            <div className="w-full text-center font-mono text-[0.65rem] uppercase tracking-wider text-subtle">
+              drop a file on the left to begin
+            </div>
+          )}
+        </div>
+
+        {/* Actions pinned to the bottom (border-t = footer divider). */}
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-border">
           {canEdit && !isEditing && (
             <button onClick={handleEnterEdit} className="btn-ghost">
               edit
@@ -441,6 +524,7 @@ export function HomeClient() {
           )}
         </div>
       </div>
+      </div>
 
       {error && (
         <div className="border border-error/40 bg-error/10 px-4 py-3 font-mono text-xs text-error">
@@ -462,14 +546,10 @@ export function HomeClient() {
           />
         ) : isEditing && doc.mode === "fixed" ? (
           <div className="space-y-4">
-            <FontFaceStyles resources={draft.state.resources} />
-            <DocumentSummary doc={draft.state} />
-            <FixedEditor doc={draft.state} onChange={handleEditedDoc} />
+            <FontFaceStyles resources={draft.state.resources} />            <FixedEditor doc={draft.state} onChange={handleEditedDoc} />
           </div>
         ) : isEditing && doc.mode === "sheet" ? (
-          <div className="space-y-4">
-            <DocumentSummary doc={draft.state} />
-            <SheetEditor
+          <div className="space-y-4">            <SheetEditor
               content={draft.state.content as SheetContent}
               onChange={(content) =>
                 handleEditedDoc({ ...draft.state, content } as Document)
@@ -477,9 +557,7 @@ export function HomeClient() {
             />
           </div>
         ) : isEditing && doc.mode === "slides" ? (
-          <div className="space-y-4">
-            <DocumentSummary doc={draft.state} />
-            <SlideEditor
+          <div className="space-y-4">            <SlideEditor
               content={draft.state.content as SlidesContent}
               resources={draft.state.resources}
               onChange={(content) =>

@@ -27,7 +27,6 @@ export function UdmViewer({ doc }: UdmViewerProps) {
   return (
     <div className="space-y-4">
       <FontFaceStyles resources={doc.resources} />
-      <DocumentSummary doc={doc} />
       <ContentRenderer
         doc={doc}
         scale={scale}
@@ -61,42 +60,6 @@ export function FontFaceStyles({ resources }: { resources: Resources }) {
   );
   if (!css) return null;
   return <style dangerouslySetInnerHTML={{ __html: css }} />;
-}
-
-export function DocumentSummary({ doc }: { doc: Document }) {
-  const subsets = doc.resources.fonts.filter((f) => f._meta?.subset).length;
-  return (
-    <div className="border border-border bg-surface">
-      <div className="border-b border-border px-4 py-2">
-        <div className="label">document</div>
-        <div className="font-sans text-base text-fg mt-0.5">
-          {doc.metadata.title ?? <span className="text-muted">(no title)</span>}
-        </div>
-        <div className="font-mono text-[0.65rem] text-subtle mt-0.5">{doc.id}</div>
-      </div>
-      <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 divide-y divide-border sm:divide-y-0 sm:divide-x">
-        <Field label="mode" value={doc.mode} mono />
-        <Field label="udm" value={doc.udm_version} mono />
-        <Field
-          label="source"
-          value={doc.metadata.source_format.mime.split("/").pop() ?? doc.metadata.source_format.mime}
-          mono
-        />
-        <Field label="fonts" value={`${doc.resources.fonts.length}${subsets ? ` · ${subsets} subset` : ""}`} mono />
-        <Field label="images" value={String(doc.resources.images.length)} mono />
-        <Field label="producer" value={doc.metadata.source_format.producer ?? "—"} mono />
-      </dl>
-    </div>
-  );
-}
-
-function Field({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div className="px-4 py-3">
-      <dt className="label mb-1">{label}</dt>
-      <dd className={`${mono ? "font-mono text-xs" : "font-sans text-sm"} text-fg`}>{value}</dd>
-    </div>
-  );
 }
 
 function ContentRenderer({

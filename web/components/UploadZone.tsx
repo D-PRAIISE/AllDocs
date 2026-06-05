@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, type ChangeEvent, type DragEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent, type DragEvent } from "react";
 
 import { track } from "@/lib/telemetry";
 
@@ -45,11 +45,38 @@ const ALLOWED_EXTS = [
   ".tiff",
 ];
 
+// Reassuring stage copy cycled while an import is in flight. These
+// mirror the real pipeline (upload → parse → OCR → build view) so the
+// wait — which can be 10-20s for a scanned PDF — never looks frozen.
+const IMPORT_STAGES = [
+  "uploading your file…",
+  "reading the document…",
+  "checking for scanned pages…",
+  "running OCR where it's needed…",
+  "extracting text, images, and layout…",
+  "building your editable view…",
+  "almost there…",
+];
+
 export function UploadZone({ onUploaded }: UploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
+  const [stageIdx, setStageIdx] = useState(0);
+
+  // Advance the stage copy on a timer while uploading; freeze on the
+  // last ("almost there…") so it doesn't loop back and look stuck.
+  useEffect(() => {
+    if (!isUploading) {
+      setStageIdx(0);
+      return;
+    }
+    const id = setInterval(() => {
+      setStageIdx((i) => Math.min(i + 1, IMPORT_STAGES.length - 1));
+    }, 2600);
+    return () => clearInterval(id);
+  }, [isUploading]);
   // When the server tells us a PDF needs a password, hold the file in
   // memory and surface a password input until the user enters it (or
   // cancels). password === null means "no prompt pending".
@@ -154,7 +181,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`border border-dashed p-10 text-center transition-colors ${
+      className={`h-full flex flex-col items-center justify-center border border-dashed p-6 text-center transition-colors ${
         isDragging
           ? "border-accent bg-accent/5"
           : isUploading
@@ -163,11 +190,21 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       }`}
     >
       {isUploading ? (
-        <div className="space-y-2" role="status" aria-live="polite">
+        <div className="space-y-4 max-w-md mx-auto" role="status" aria-live="polite">
           <div className="font-mono text-xs uppercase tracking-wider text-accent">
             importing…
           </div>
-          {progress && <div className="font-mono text-xs text-muted">{progress}</div>}
+          {/* Indeterminate sweep — we can't get true per-page progress
+              from the one-shot adapter subprocess, but motion + staged
+              copy keeps a 15s OCR import from looking frozen. */}
+          <div className="relative h-1 w-full bg-border overflow-hidden">
+            <div
+              className="absolute top-0 h-full bg-accent"
+              style={{ animation: "alldocs-sweep 1.4s ease-in-out infinite" }}
+            />
+          </div>
+          <div className="font-sans text-sm text-fg/80">{IMPORT_STAGES[stageIdx]}</div>
+          {progress && <div className="font-mono text-[0.65rem] text-subtle">{progress}</div>}
         </div>
       ) : passwordPrompt ? (
         <PasswordPrompt

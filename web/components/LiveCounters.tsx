@@ -49,7 +49,7 @@ export function LiveCounters() {
 
   return (
     <section className="border-b border-border bg-elevated/40">
-      <div className="mx-auto max-w-6xl px-6 py-8 grid grid-cols-3 gap-4">
+      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-8 grid grid-cols-3 gap-4">
         {items.map((it) => (
           <div key={it.label} className="text-center">
             <div className="font-sans text-2xl sm:text-4xl font-bold tabular-nums text-fg">

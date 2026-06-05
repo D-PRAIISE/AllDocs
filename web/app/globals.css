@@ -104,6 +104,22 @@ textarea {
   }
 }
 
+/* Indeterminate progress bar: a segment sweeps across the track so a
+ * long-running import (OCR can take 10-20s) never looks frozen. */
+@keyframes alldocs-sweep {
+  0% {
+    left: -40%;
+    width: 40%;
+  }
+  50% {
+    width: 55%;
+  }
+  100% {
+    left: 100%;
+    width: 40%;
+  }
+}
+
 /* ----- Brutalist primitives ----- */
 @utility label {
   font-family: var(--font-mono);
