@@ -290,6 +290,38 @@ function pickImageFile(): Promise<PickedImage | null> {
 export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasProps) {
   const fixed = doc.content as FixedContent;
   const [scale, setScale] = useState(1);
+  // First-run coaching banner. Starts hidden to avoid an SSR/hydration
+  // mismatch, then shows on mount unless the user dismissed it before
+  // (persisted in localStorage so returning users aren't nagged).
+  const [showCoach, setShowCoach] = useState(false);
+  useEffect(() => {
+    try {
+      setShowCoach(localStorage.getItem("alldocs_editor_coach_dismissed") !== "1");
+    } catch {
+      setShowCoach(true);
+    }
+  }, []);
+  const persistCoach = (dismissed: boolean) => {
+    try {
+      if (dismissed) localStorage.setItem("alldocs_editor_coach_dismissed", "1");
+      else localStorage.removeItem("alldocs_editor_coach_dismissed");
+    } catch {
+      /* private mode / storage disabled — fine, just won't persist */
+    }
+  };
+  const dismissCoach = useCallback(() => {
+    setShowCoach(false);
+    persistCoach(true);
+  }, []);
+  // Header "? tips" button — lets users bring the banner back after
+  // they've dismissed it (the dismissal persists in localStorage, so
+  // without this there'd be no way to see the tips again).
+  const toggleCoach = useCallback(() => {
+    setShowCoach((v) => {
+      persistCoach(v); // hiding → persist dismissed; showing → clear it
+      return !v;
+    });
+  }, []);
   const [editing, setEditing] = useState<EditingState | null>(null);
   // Runs whose text the user has changed this session. Used so OCR runs
   // (invisible by default — the scanned image shows the text) flip to
@@ -1302,7 +1334,39 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         libraryCount={library.length}
         libraryOpen={libraryOpen}
         onToggleLibrary={() => setLibraryOpen((v) => !v)}
+        tipsOpen={showCoach}
+        onToggleTips={toggleCoach}
       />
+      {showCoach && (
+        <div className="flex items-start gap-3 border border-accent/40 bg-accent/5 px-4 py-3">
+          <div>
+            <div className="font-mono text-[0.65rem] uppercase tracking-wider text-accent mb-1">
+              editing tips
+            </div>
+            <ul className="font-sans text-sm text-fg/85 space-y-0.5 leading-relaxed">
+              <li>
+                <span className="text-fg font-medium">Click any text</span> to edit it in
+                place — Enter commits, Esc cancels.
+              </li>
+              <li>
+                Pick a <span className="text-fg font-medium">tool</span> above to add text,
+                images, shapes, highlights, or form fields.
+              </li>
+              <li>
+                Use <span className="text-fg font-medium">select</span> to move and resize
+                images and shapes. The hint at the top-right shows what the current tool does.
+              </li>
+            </ul>
+          </div>
+          <button
+            onClick={dismissCoach}
+            className="ml-auto shrink-0 font-mono text-[0.65rem] uppercase tracking-wider text-subtle hover:text-fg"
+            title="Dismiss these tips"
+          >
+            ✕ dismiss
+          </button>
+        </div>
+      )}
       <PageOpsPanel doc={doc} onChange={onChange} />
       {libraryOpen && library.length > 0 ? (
         <ImageLibraryPanel
@@ -3167,6 +3231,8 @@ function EditorHeader({
   libraryCount,
   libraryOpen,
   onToggleLibrary,
+  tipsOpen,
+  onToggleTips,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
@@ -3182,6 +3248,8 @@ function EditorHeader({
   libraryCount: number;
   libraryOpen: boolean;
   onToggleLibrary: () => void;
+  tipsOpen: boolean;
+  onToggleTips: () => void;
 }) {
   const modeBtn = (active: boolean) =>
     `font-mono text-xs px-2 py-1 border transition-colors ${
@@ -3189,37 +3257,72 @@ function EditorHeader({
         ? "bg-accent text-accent-fg border-accent"
         : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
     }`;
-  const tools: { m: EditorMode; label: string }[] = [
-    { m: "select", label: "⬚ select" },
-    { m: "add-text", label: "✎ add text" },
-    { m: "add-image", label: "🖼 add image" },
-    { m: "add-rect", label: "▭ add rect" },
-    { m: "recolor", label: "◐ recolor shape" },
-    { m: "region-image", label: "⊕ replace region" },
-    { m: "highlight", label: "▮ highlight" },
-    { m: "comment", label: "💬 comment" },
-    { m: "ink", label: "✒ ink" },
-    { m: "add-field-text", label: "▭ text field" },
-    { m: "add-field-checkbox", label: "☐ checkbox" },
-    { m: "add-field-radio", label: "◉ radio" },
+  // Tools grouped by intent so the dense row is scannable. Glyphs are
+  // unique within the row (the old "add rect" and "text field" both used
+  // ▭ — text field is now a distinct "T").
+  const toolGroups: { group: string; items: { m: EditorMode; label: string }[] }[] = [
+    {
+      group: "content",
+      items: [
+        { m: "select", label: "⬚ select" },
+        { m: "add-text", label: "✎ add text" },
+        { m: "add-image", label: "🖼 add image" },
+        { m: "add-rect", label: "▭ rectangle" },
+        { m: "recolor", label: "◐ recolor" },
+        { m: "region-image", label: "⊕ replace region" },
+      ],
+    },
+    {
+      group: "annotate",
+      items: [
+        { m: "highlight", label: "▮ highlight" },
+        { m: "comment", label: "💬 comment" },
+        { m: "ink", label: "✒ ink" },
+      ],
+    },
+    {
+      group: "form fields",
+      items: [
+        { m: "add-field-text", label: "T text field" },
+        { m: "add-field-checkbox", label: "☐ checkbox" },
+        { m: "add-field-radio", label: "◉ radio" },
+      ],
+    },
   ];
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">
       <div className="flex items-center gap-1 flex-wrap">
         <ZoomControl scale={scale} onScaleChange={onScaleChange} />
         <span className="label mx-2">view</span>
-        <button onClick={() => onLayoutChange("list")} className={modeBtn(layout === "list")}>
+        <button
+          onClick={() => onLayoutChange("list")}
+          className={modeBtn(layout === "list")}
+          title="Single-column reading view at full zoom"
+        >
           ☰ list
         </button>
-        <button onClick={() => onLayoutChange("grid")} className={modeBtn(layout === "grid")}>
+        <button
+          onClick={() => onLayoutChange("grid")}
+          className={modeBtn(layout === "grid")}
+          title="Thumbnail grid of all pages"
+        >
           ▦ grid
         </button>
-        <span className="label mx-2">tools</span>
-        {tools.map((t) => (
-          <button key={t.m} onClick={() => onToggleMode(t.m)} className={modeBtn(mode === t.m)}>
-            {t.label}
-          </button>
-        ))}
+        {toolGroups.flatMap((g) => [
+          <span key={`grp-${g.group}`} className="label mx-2 border-l border-border pl-2">
+            {g.group}
+          </span>,
+          ...g.items.map((t) => (
+            <button
+              key={t.m}
+              onClick={() => onToggleMode(t.m)}
+              className={modeBtn(mode === t.m)}
+              title={MODE_HINT[t.m]}
+            >
+              {t.label}
+            </button>
+          )),
+        ])}
       </div>
       <div className="flex items-center gap-3">
         {canExtractToLibrary ? (
@@ -3249,6 +3352,13 @@ function EditorHeader({
             {showAutoDetected ? "✓" : "○"} auto-fields ({autoDetectedCount})
           </button>
         ) : null}
+        <button
+          onClick={onToggleTips}
+          className={modeBtn(tipsOpen)}
+          title="Show editing tips"
+        >
+          ? tips
+        </button>
         <div className="label text-muted">{MODE_HINT[mode]}</div>
       </div>
     </div>
