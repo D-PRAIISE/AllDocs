@@ -45,36 +45,54 @@ const ALLOWED_EXTS = [
   ".tiff",
 ];
 
-// Reassuring stage copy cycled while an import is in flight. These
-// mirror the real pipeline (upload → parse → OCR → build view) so the
-// wait — which can be 10-20s for a scanned PDF — never looks frozen.
+// Stage copy shown while an import is in flight, walking through the
+// real AllDocs pipeline (adapter spawn → parse → OCR → asset extraction
+// → UDM build → render). At ~4s each these carry the user for the first
+// ~minute; after that we switch to an honest "still working" line +
+// elapsed seconds rather than freezing on a fake "almost there". Imports
+// run as a background job and can legitimately take minutes.
 const IMPORT_STAGES = [
   "uploading your file…",
-  "reading the document…",
-  "checking for scanned pages…",
-  "running OCR where it's needed…",
-  "extracting text, images, and layout…",
-  "building your editable view…",
-  "almost there…",
+  "spawning the document adapter…",
+  "sniffing the file format…",
+  "validating the source structure…",
+  "parsing pages and content streams…",
+  "detecting scanned vs. native text…",
+  "running Tesseract OCR on scanned pages…",
+  "recognizing characters and words…",
+  "rebuilding the reading order…",
+  "extracting embedded images…",
+  "extracting and subsetting fonts…",
+  "normalizing page geometry…",
+  "mapping to the Universal Document Model…",
+  "building editable text and layout layers…",
+  "rendering your editable view…",
 ];
+const STAGE_SECS = 4;
+
+function stageMessage(elapsedSec: number): string {
+  const i = Math.floor(elapsedSec / STAGE_SECS);
+  if (i < IMPORT_STAGES.length) return IMPORT_STAGES[i];
+  return "still working — large or scanned files can take a few minutes";
+}
 
 export function UploadZone({ onUploaded }: UploadZoneProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
-  const [stageIdx, setStageIdx] = useState(0);
+  const [elapsedSec, setElapsedSec] = useState(0);
 
-  // Advance the stage copy on a timer while uploading; freeze on the
-  // last ("almost there…") so it doesn't loop back and look stuck.
+  // Tick an elapsed-seconds counter while uploading so the wait shows
+  // honest progress (and drives the staged copy) instead of looking
+  // frozen on a long OCR import.
   useEffect(() => {
     if (!isUploading) {
-      setStageIdx(0);
+      setElapsedSec(0);
       return;
     }
-    const id = setInterval(() => {
-      setStageIdx((i) => Math.min(i + 1, IMPORT_STAGES.length - 1));
-    }, 2600);
+    const t0 = Date.now();
+    const id = setInterval(() => setElapsedSec(Math.floor((Date.now() - t0) / 1000)), 1000);
     return () => clearInterval(id);
   }, [isUploading]);
   // When the server tells us a PDF needs a password, hold the file in
@@ -88,45 +106,68 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
   const upload = useCallback(
     async (file: File, password?: string): Promise<void> => {
       setError(null);
-      setProgress(`uploading ${file.name} (${formatBytes(file.size)})`);
+      setProgress(null);
       setIsUploading(true);
       const ext = file.name.toLowerCase().split(".").pop() || "unknown";
       try {
         const formData = new FormData();
         formData.append("file", file);
         if (password) formData.append("password", password);
+
+        // The importer runs as a background job (OCR can take minutes,
+        // past the Cloudflare ~100s timeout). POST returns a job_id we
+        // poll until the document is ready.
         const res = await fetch("/api/import", { method: "POST", body: formData });
-        if (!res.ok) {
-          const j = (await res.json().catch(() => null)) as
-            | { error?: string; code?: string }
-            | null;
-          // Encrypted-PDF flow: bring up the password prompt instead
-          // of surfacing the error generically. The user can retry
-          // any number of times — each retry is rate-limited like a
-          // fresh import call.
-          if (j?.code === "password_required" || j?.code === "password_wrong") {
+        if (!res.ok && res.status !== 202) {
+          const j = (await res.json().catch(() => null)) as { error?: string } | null;
+          track("import_failed", { route: "/api/import", status: res.status, mode: ext });
+          throw new Error(j?.error ?? `HTTP ${res.status}`);
+        }
+        const { job_id } = (await res.json()) as { job_id: string };
+
+        // The status endpoint long-polls (holds up to ~25s, resolving
+        // the instant the job finishes), so each request blocks until
+        // there's news — we just re-ask with a tiny gap if it returns
+        // "running" (only happens on imports longer than the hold cap).
+        const POLL_DEADLINE_MS = 12 * 60_000; // safety net past the server timeout
+        const deadline = Date.now() + POLL_DEADLINE_MS;
+        let first = true;
+        for (;;) {
+          await new Promise((r) => setTimeout(r, first ? 150 : 300));
+          first = false;
+          if (Date.now() > deadline) throw new Error("import timed out — please try again");
+
+          const sres = await fetch(`/api/import/status/${job_id}`);
+          if (sres.status === 404) throw new Error("import expired — please try again");
+          const s = (await sres.json()) as {
+            status: string;
+            error?: string;
+          } & Partial<UploadResult>;
+
+          if (s.status === "password_required" || s.status === "password_wrong") {
+            // Encrypted-PDF flow: prompt for the password and let the
+            // user retry (a fresh import with the password attached).
             setPasswordPrompt({
               file,
               message:
-                j.code === "password_wrong"
+                s.status === "password_wrong"
                   ? "wrong password — try again"
                   : "this PDF is password-protected",
             });
-            setProgress(null);
-            setIsUploading(false);
             return;
           }
-          track("import_failed", {
-            route: "/api/import",
-            status: res.status,
-            mode: ext,
-          });
-          throw new Error(j?.error ?? `HTTP ${res.status}`);
+          if (s.status === "error") {
+            track("import_failed", { route: "/api/import", status: 500, mode: ext });
+            throw new Error(s.error || "import failed");
+          }
+          if (s.status === "done") {
+            setProgress(`imported in ${s.ms_taken}ms`);
+            setPasswordPrompt(null);
+            onUploaded(s as UploadResult);
+            return;
+          }
+          // status === "running" → keep polling
         }
-        const result = (await res.json()) as UploadResult;
-        setProgress(`imported in ${result.ms_taken}ms`);
-        setPasswordPrompt(null);
-        onUploaded(result);
       } catch (e) {
         if (e instanceof Error && e.name && e.name !== "Error") {
           track("import_threw", {
@@ -194,17 +235,19 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           <div className="font-mono text-xs uppercase tracking-wider text-accent">
             importing…
           </div>
-          {/* Indeterminate sweep — we can't get true per-page progress
-              from the one-shot adapter subprocess, but motion + staged
-              copy keeps a 15s OCR import from looking frozen. */}
+          {/* Indeterminate sweep — the importer runs as a background
+              job we poll, so we show motion + staged copy + an honest
+              elapsed timer rather than fake percentages. */}
           <div className="relative h-1 w-full bg-border overflow-hidden">
             <div
               className="absolute top-0 h-full bg-accent"
               style={{ animation: "alldocs-sweep 1.4s ease-in-out infinite" }}
             />
           </div>
-          <div className="font-sans text-sm text-fg/80">{IMPORT_STAGES[stageIdx]}</div>
-          {progress && <div className="font-mono text-[0.65rem] text-subtle">{progress}</div>}
+          <div className="font-sans text-sm text-fg/80">{stageMessage(elapsedSec)}</div>
+          <div className="font-mono text-[0.65rem] text-subtle tabular-nums">
+            {elapsedSec}s elapsed
+          </div>
         </div>
       ) : passwordPrompt ? (
         <PasswordPrompt
@@ -242,12 +285,6 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       )}
     </div>
   );
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n}B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`;
-  return `${(n / 1024 / 1024).toFixed(1)}MB`;
 }
 
 function PasswordPrompt({

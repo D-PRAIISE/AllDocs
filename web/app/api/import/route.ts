@@ -17,6 +17,11 @@ import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
 import { hashIp, recordEvent } from "@/lib/audit";
+import {
+  completeImportJob,
+  createImportJob,
+  failImportJob,
+} from "@/lib/import-jobs";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { maybeSweep } from "@/lib/upload-cleanup";
 
@@ -36,7 +41,10 @@ const MAX_FILE_BYTES =
   Number(process.env.ALLDOCS_MAX_UPLOAD_MB ?? 200) * 1024 * 1024;
 // OCR of scanned pages runs at import time (~6-8 s/page via Tesseract),
 // so the importer can legitimately take a while on multi-page scans.
-const SUBPROCESS_TIMEOUT_MS = 180_000;
+// The import now runs as a background job (the client polls for
+// completion), so we're no longer bound by the HTTP/Cloudflare ~100s
+// response timeout — a large scan can take several minutes.
+const SUBPROCESS_TIMEOUT_MS = 600_000;
 const PDF_MAGIC = Buffer.from([0x25, 0x50, 0x44, 0x46]); // %PDF
 const ZIP_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]); // PK\3\4 (DOCX/ODT/XLSX/PPTX)
 // Image magic bytes — used by detectFormat so a renamed file with the
@@ -184,19 +192,21 @@ function _isImageMagic(buf: Buffer): boolean {
   return false;
 }
 
-interface ImportResponse {
+// The POST now returns a job handle immediately; the finished document
+// is fetched by polling /api/import/status/[jobId].
+interface AcceptedResponse {
+  job_id: string;
   session_id: string;
-  udm_url: string;
   filename: string;
   size: number;
-  ms_taken: number;
+  format: Format;
 }
 
 interface ErrorResponse {
   error: string;
 }
 
-export async function POST(req: NextRequest): Promise<NextResponse<ImportResponse | ErrorResponse>> {
+export async function POST(req: NextRequest): Promise<NextResponse<AcceptedResponse | ErrorResponse>> {
   const ip = clientIp(req);
   const decision = checkRateLimit(ip, "/api/import");
   if (!decision.allowed) {
@@ -283,74 +293,77 @@ export async function POST(req: NextRequest): Promise<NextResponse<ImportRespons
 
   await writeFile(sourcePath, buf);
 
-  const started = Date.now();
-  try {
-    await runImporter(
-      adapter,
-      sourcePath,
-      udmPath,
-      assetsDir,
-      urlPrefix,
-      sourceUrl,
-      pythonPath,
-      password
-    );
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    // The Python CLI surfaces encrypted-PDF cases via exit code 4
-    // and an "ENCRYPTED: <code>" stderr line so we can prompt the
-    // user for a password instead of dumping a stack trace.
-    if (msg.includes("ENCRYPTED: PASSWORD_REQUIRED")) {
-      return NextResponse.json(
-        {
-          error: "PDF is password-protected — enter the password to open it.",
-          code: "password_required",
-        },
-        { status: 401 }
-      );
-    }
-    if (msg.includes("ENCRYPTED: PASSWORD_WRONG")) {
-      return NextResponse.json(
-        { error: "wrong password — try again.", code: "password_wrong" },
-        { status: 401 }
-      );
-    }
-    await recordEvent({
-      event: "rejected",
-      route: "/api/import",
-      ip_hash: hashIp(ip),
-      format,
-      bytes: file.size,
-      status: 500,
-      error: msg.slice(0, 200),
-    });
-    return NextResponse.json({ error: `Importer failed: ${msg}` }, { status: 500 });
-  }
-  const ms = Date.now() - started;
-
-  await recordEvent({
-    event: "import",
-    route: "/api/import",
-    ip_hash: hashIp(ip),
-    format,
-    bytes: file.size,
-    ms,
-    status: 200,
-  });
-
-  return NextResponse.json({
-    session_id: sessionId,
-    udm_url: `/uploads/${sessionId}/doc.udm.json`,
+  // Enqueue the job and run the importer in the background. The Node
+  // process is long-lived (systemd `next start`), so this keeps running
+  // after we respond; the client polls /api/import/status/[jobId].
+  const job = createImportJob({
+    id: sessionId,
     filename: file.name,
-    size: file.size,
     format,
-    ms_taken: ms,
-    // True only when the user actually supplied a non-empty password
-    // to unlock the source. Owner-only-encrypted PDFs unlock with
-    // an empty password and don't count — surfacing the hint there
-    // would be misleading.
-    had_password: !!password,
+    size: file.size,
   });
+  const started = Date.now();
+
+  runImporter(adapter, sourcePath, udmPath, assetsDir, urlPrefix, sourceUrl, pythonPath, password)
+    .then(async () => {
+      const ms = Date.now() - started;
+      await recordEvent({
+        event: "import",
+        route: "/api/import",
+        ip_hash: hashIp(ip),
+        format,
+        bytes: file.size,
+        ms,
+        status: 200,
+      });
+      completeImportJob(job.id, {
+        session_id: sessionId,
+        udm_url: `/uploads/${sessionId}/doc.udm.json`,
+        filename: file.name,
+        size: file.size,
+        format,
+        ms_taken: ms,
+        // True only when the user actually supplied a non-empty
+        // password to unlock the source. Owner-only-encrypted PDFs
+        // unlock with an empty password and don't count.
+        had_password: !!password,
+      });
+    })
+    .catch(async (e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      // The Python CLI surfaces encrypted-PDF cases via exit code 4
+      // and an "ENCRYPTED: <code>" stderr line so the client can
+      // prompt for a password instead of showing a stack trace.
+      if (msg.includes("ENCRYPTED: PASSWORD_REQUIRED")) {
+        failImportJob(job.id, "password_required");
+        return;
+      }
+      if (msg.includes("ENCRYPTED: PASSWORD_WRONG")) {
+        failImportJob(job.id, "password_wrong");
+        return;
+      }
+      await recordEvent({
+        event: "rejected",
+        route: "/api/import",
+        ip_hash: hashIp(ip),
+        format,
+        bytes: file.size,
+        status: 500,
+        error: msg.slice(0, 200),
+      });
+      failImportJob(job.id, "error", `Importer failed: ${msg}`);
+    });
+
+  return NextResponse.json(
+    {
+      job_id: job.id,
+      session_id: sessionId,
+      filename: file.name,
+      size: file.size,
+      format,
+    },
+    { status: 202 }
+  );
 }
 
 function runImporter(
