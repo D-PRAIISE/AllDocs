@@ -41,9 +41,10 @@ export async function GET(
     );
   }
 
-  // Hold until the job leaves "running" or we hit the cap.
+  // Hold until the job reaches a terminal state (or we hit the cap).
+  // "queued" (waiting for a CPU slot) and "running" are both non-terminal.
   const deadline = Date.now() + MAX_HOLD_MS;
-  while (job.status === "running" && Date.now() < deadline) {
+  while ((job.status === "queued" || job.status === "running") && Date.now() < deadline) {
     await sleep(CHECK_MS);
     job = getImportJob(jobId) ?? job;
   }
@@ -59,9 +60,10 @@ export async function GET(
   if (job.status === "password_required" || job.status === "password_wrong") {
     return NextResponse.json({ status: job.status, elapsed_ms });
   }
-  // Still running.
+  // Still queued (waiting for a CPU slot) or running — report which so
+  // the client can say "waiting in queue" vs. show pipeline stages.
   return NextResponse.json({
-    status: "running",
+    status: job.status, // "queued" | "running"
     elapsed_ms,
     filename: job.filename,
     format: job.format,

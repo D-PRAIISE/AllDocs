@@ -18,9 +18,17 @@ import { randomUUID } from "node:crypto";
 
 import { hashIp, recordEvent } from "@/lib/audit";
 import {
+  acquireHeavySlot,
+  activeJobCount,
+  activeJobCountForIp,
   completeImportJob,
   createImportJob,
   failImportJob,
+  isHeavyFormat,
+  markImportJobRunning,
+  releaseHeavySlot,
+  MAX_ACTIVE_GLOBAL,
+  MAX_ACTIVE_PER_IP,
 } from "@/lib/import-jobs";
 import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 import { maybeSweep } from "@/lib/upload-cleanup";
@@ -222,6 +230,23 @@ export async function POST(req: NextRequest): Promise<NextResponse<AcceptedRespo
     );
   }
 
+  // Concurrency guards (protect the shared VPS). Rejected early, before
+  // we buffer/parse the upload. Per-IP cap stops one client flooding the
+  // queue; the global cap is a last-resort backpressure valve.
+  const ipHash = hashIp(ip);
+  if (activeJobCount() >= MAX_ACTIVE_GLOBAL) {
+    return NextResponse.json(
+      { error: "server busy — please try again in a moment" },
+      { status: 503, headers: { "Retry-After": "10" } }
+    );
+  }
+  if (activeJobCountForIp(ipHash) >= MAX_ACTIVE_PER_IP) {
+    return NextResponse.json(
+      { error: "too many imports in progress — let your current ones finish" },
+      { status: 429, headers: { "Retry-After": "10" } }
+    );
+  }
+
   // Best-effort sweep of stale uploads + closed tickets. Lazy so we
   // don't need an external cron; sweep_interval keeps the cost low.
   const { publicUploads, ticketsRoot } = paths();
@@ -301,16 +326,25 @@ export async function POST(req: NextRequest): Promise<NextResponse<AcceptedRespo
     filename: file.name,
     format,
     size: file.size,
+    ipHash,
   });
-  const started = Date.now();
+  const heavy = isHeavyFormat(format);
 
-  runImporter(adapter, sourcePath, udmPath, assetsDir, urlPrefix, sourceUrl, pythonPath, password)
-    .then(async () => {
+  void (async () => {
+    // Heavy (OCR) imports wait for a CPU slot; light ones run at once.
+    // The job stays "queued" until the slot is acquired.
+    if (heavy) await acquireHeavySlot();
+    markImportJobRunning(job.id);
+    const started = Date.now();
+    try {
+      await runImporter(
+        adapter, sourcePath, udmPath, assetsDir, urlPrefix, sourceUrl, pythonPath, password
+      );
       const ms = Date.now() - started;
       await recordEvent({
         event: "import",
         route: "/api/import",
-        ip_hash: hashIp(ip),
+        ip_hash: ipHash,
         format,
         bytes: file.size,
         ms,
@@ -328,31 +362,31 @@ export async function POST(req: NextRequest): Promise<NextResponse<AcceptedRespo
         // unlock with an empty password and don't count.
         had_password: !!password,
       });
-    })
-    .catch(async (e) => {
+    } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // The Python CLI surfaces encrypted-PDF cases via exit code 4
       // and an "ENCRYPTED: <code>" stderr line so the client can
       // prompt for a password instead of showing a stack trace.
       if (msg.includes("ENCRYPTED: PASSWORD_REQUIRED")) {
         failImportJob(job.id, "password_required");
-        return;
-      }
-      if (msg.includes("ENCRYPTED: PASSWORD_WRONG")) {
+      } else if (msg.includes("ENCRYPTED: PASSWORD_WRONG")) {
         failImportJob(job.id, "password_wrong");
-        return;
+      } else {
+        await recordEvent({
+          event: "rejected",
+          route: "/api/import",
+          ip_hash: ipHash,
+          format,
+          bytes: file.size,
+          status: 500,
+          error: msg.slice(0, 200),
+        });
+        failImportJob(job.id, "error", `Importer failed: ${msg}`);
       }
-      await recordEvent({
-        event: "rejected",
-        route: "/api/import",
-        ip_hash: hashIp(ip),
-        format,
-        bytes: file.size,
-        status: 500,
-        error: msg.slice(0, 200),
-      });
-      failImportJob(job.id, "error", `Importer failed: ${msg}`);
-    });
+    } finally {
+      if (heavy) releaseHeavySlot();
+    }
+  })();
 
   return NextResponse.json(
     {

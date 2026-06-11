@@ -82,6 +82,9 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  // True while the job is waiting for a CPU slot (server busy with other
+  // heavy imports) — shown instead of the pipeline stages.
+  const [queued, setQueued] = useState(false);
 
   // Tick an elapsed-seconds counter while uploading so the wait shows
   // honest progress (and drives the staged copy) instead of looking
@@ -89,6 +92,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
   useEffect(() => {
     if (!isUploading) {
       setElapsedSec(0);
+      setQueued(false);
       return;
     }
     const t0 = Date.now();
@@ -166,7 +170,8 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
             onUploaded(s as UploadResult);
             return;
           }
-          // status === "running" → keep polling
+          // "queued" (waiting for a slot) vs "running" — keep polling.
+          setQueued(s.status === "queued");
         }
       } catch (e) {
         if (e instanceof Error && e.name && e.name !== "Error") {
@@ -244,7 +249,11 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
               style={{ animation: "alldocs-sweep 1.4s ease-in-out infinite" }}
             />
           </div>
-          <div className="font-sans text-sm text-fg/80">{stageMessage(elapsedSec)}</div>
+          <div className="font-sans text-sm text-fg/80">
+            {queued
+              ? "waiting for a free slot — the server is finishing other imports…"
+              : stageMessage(elapsedSec)}
+          </div>
           <div className="font-mono text-[0.65rem] text-subtle tabular-nums">
             {elapsedSec}s elapsed
           </div>
