@@ -22,6 +22,8 @@ import {
 } from "@/lib/udm";
 import { fitScaleForWidth, useIsMobile } from "@/lib/use-is-mobile";
 import { usePinchZoom } from "@/lib/use-pinch-zoom";
+import { findTextMatches } from "@/lib/text-search";
+import { SearchBar } from "./SearchBar";
 
 type FamilyClass = "sans" | "serif" | "mono";
 
@@ -404,47 +406,10 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   const [searchQuery, setSearchQuery] = useState("");
   const [searchActiveIdx, setSearchActiveIdx] = useState(0);
 
-  interface SearchMatch {
-    pageIdx: number;
-    layerIdx: number;
-    runIdx: number;
-    xPx: number;
-    yPx: number;
-    wPx: number;
-    hPx: number;
-  }
-  const searchMatches = useMemo<SearchMatch[]>(() => {
-    const q = searchQuery.trim().toLowerCase();
-    if (!q) return [];
-    const out: SearchMatch[] = [];
-    fixed.pages.forEach((page, pageIdx) => {
-      page.layers.forEach((layer, layerIdx) => {
-        if (layer.type !== "text") return;
-        layer.runs.forEach((run, runIdx) => {
-          if (!run.text.toLowerCase().includes(q)) return;
-          const fontSizePx = lengthToPx(run.font_size) * scale;
-          const xPx = lengthToPx(run.x) * scale;
-          const yPx = lengthToPx(run.y) * scale;
-          // Estimate width — OCR runs carry it; everything else falls
-          // back to a glyph-width approximation. Search highlighting is
-          // a guide, not a measurement, so this is fine.
-          const widthPt = run._meta?.ocr_width ?? run.text.length * lengthToPt(run.font_size) * 0.5;
-          const wPx = widthPt * (96 / 72) * scale;
-          const top = yPx - fontSizePx * BASELINE_TO_TOP;
-          out.push({
-            pageIdx,
-            layerIdx,
-            runIdx,
-            xPx,
-            yPx: top,
-            wPx,
-            hPx: fontSizePx,
-          });
-        });
-      });
-    });
-    return out;
-  }, [fixed, searchQuery, scale]);
+  const searchMatches = useMemo(
+    () => findTextMatches(fixed, searchQuery, scale),
+    [fixed, searchQuery, scale],
+  );
 
   // Clamp the active index whenever the matches change.
   useEffect(() => {
@@ -1356,6 +1321,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         onToggleLibrary={() => setLibraryOpen((v) => !v)}
         tipsOpen={showCoach}
         onToggleTips={toggleCoach}
+        searchOpen={searchOpen}
+        onToggleSearch={() => setSearchOpen((o) => !o)}
       />
       {showCoach && (
         <div className="flex items-start gap-3 border border-accent/40 bg-accent/5 px-4 py-3">
@@ -1639,85 +1606,6 @@ function ImageLibraryPanel({
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-/** Compact in-editor search bar. Renders above the page container; the
- * actual match highlighting lives on each Stage. */
-function SearchBar({
-  query,
-  onQueryChange,
-  totalMatches,
-  activeIdx,
-  onPrev,
-  onNext,
-  onClose,
-}: {
-  query: string;
-  onQueryChange: (q: string) => void;
-  totalMatches: number;
-  activeIdx: number;
-  onPrev: () => void;
-  onNext: () => void;
-  onClose: () => void;
-}) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
-  }, []);
-  const btn =
-    "font-mono text-xs px-2 py-1 border border-border text-muted hover:text-fg hover:border-fg disabled:opacity-25 disabled:hover:text-muted disabled:hover:border-border";
-  return (
-    <div className="border border-border bg-surface px-3 py-2 flex items-center gap-2">
-      <span className="label">find</span>
-      <input
-        ref={inputRef}
-        value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            e.preventDefault();
-            if (e.shiftKey) onPrev();
-            else onNext();
-          } else if (e.key === "Escape") {
-            e.preventDefault();
-            onClose();
-          }
-        }}
-        placeholder="search text…"
-        className="font-mono text-xs px-2 py-1 bg-bg border border-border text-fg flex-1 min-w-0"
-        style={{ color: "#111", caretColor: "#111" }}
-      />
-      <span className="font-mono text-[0.65rem] uppercase tracking-wider text-subtle whitespace-nowrap">
-        {totalMatches === 0
-          ? query.trim() === ""
-            ? "—"
-            : "0 matches"
-          : `${activeIdx + 1} / ${totalMatches}`}
-      </span>
-      <button
-        className={btn}
-        onClick={onPrev}
-        disabled={totalMatches === 0}
-        title="Previous (Shift+Enter)"
-        aria-label="Previous match"
-      >
-        ↑
-      </button>
-      <button
-        className={btn}
-        onClick={onNext}
-        disabled={totalMatches === 0}
-        title="Next (Enter)"
-        aria-label="Next match"
-      >
-        ↓
-      </button>
-      <button className={btn} onClick={onClose} title="Close (Esc)" aria-label="Close search">
-        ✕
-      </button>
     </div>
   );
 }
@@ -3266,6 +3154,8 @@ function EditorHeader({
   onToggleLibrary,
   tipsOpen,
   onToggleTips,
+  searchOpen,
+  onToggleSearch,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
@@ -3284,6 +3174,8 @@ function EditorHeader({
   onToggleLibrary: () => void;
   tipsOpen: boolean;
   onToggleTips: () => void;
+  searchOpen: boolean;
+  onToggleSearch: () => void;
 }) {
   const modeBtn = (active: boolean) =>
     `font-mono text-xs px-2 py-1 border transition-colors shrink-0 whitespace-nowrap ${
@@ -3391,6 +3283,13 @@ function EditorHeader({
             {showAutoDetected ? "✓" : "○"} auto-fields ({autoDetectedCount})
           </button>
         ) : null}
+        <button
+          onClick={onToggleSearch}
+          className={modeBtn(searchOpen)}
+          title="Find text in document (Ctrl+F)"
+        >
+          🔍 find
+        </button>
         <button
           onClick={onToggleTips}
           className={modeBtn(tipsOpen)}

@@ -11,12 +11,17 @@ import {
   colorRefToCss,
   lengthToPx,
 } from "@/lib/udm";
+import { type SearchMatch, matchKey } from "@/lib/text-search";
 
 interface FixedPageViewProps {
   page: Page;
   resources: Resources;
   /** Display scale multiplier. 1.0 = 96 DPI native. */
   scale?: number;
+  /** Find-in-document matches that fall on this page (scaled px rects). */
+  searchMatches?: SearchMatch[];
+  /** Key of the currently-focused match, for stronger highlighting. */
+  activeMatchKey?: string | null;
 }
 
 /**
@@ -24,7 +29,13 @@ interface FixedPageViewProps {
  * Each layer is positioned absolutely in pixel coords derived from the
  * UDM Length values. Text runs render with their declared font/size/color.
  */
-export function FixedPageView({ page, resources, scale = 1 }: FixedPageViewProps) {
+export function FixedPageView({
+  page,
+  resources,
+  scale = 1,
+  searchMatches,
+  activeMatchKey,
+}: FixedPageViewProps) {
   const w = lengthToPx(page.width) * scale;
   const h = lengthToPx(page.height) * scale;
   const pageWPt = page.width.unit === "pt" ? page.width.value : lengthToPx(page.width) / (96 / 72);
@@ -51,6 +62,28 @@ export function FixedPageView({ page, resources, scale = 1 }: FixedPageViewProps
       {ordered.map(({ layer, originalIdx }) => (
         <LayerView key={originalIdx} layer={layer} resources={resources} scale={scale} />
       ))}
+      {/* Find-in-document highlights — drawn on top of the page, never
+          intercept clicks. Active match is stronger + outlined. */}
+      {searchMatches?.map((m) => {
+        const key = matchKey(m);
+        const active = key === activeMatchKey;
+        return (
+          <div
+            key={key}
+            aria-hidden
+            style={{
+              position: "absolute",
+              left: `${m.xPx}px`,
+              top: `${m.yPx}px`,
+              width: `${m.wPx}px`,
+              height: `${m.hPx}px`,
+              background: active ? "rgba(252,196,106,0.55)" : "rgba(252,196,106,0.32)",
+              outline: active ? "1.5px solid #c67700" : "none",
+              pointerEvents: "none",
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

@@ -13,7 +13,9 @@ import {
 } from "@/lib/udm";
 import { fitScaleForWidth, useIsMobile } from "@/lib/use-is-mobile";
 import { usePinchZoom } from "@/lib/use-pinch-zoom";
+import { findTextMatches, matchKey } from "@/lib/text-search";
 import { FixedPageView } from "./FixedPageView";
+import { SearchBar } from "./SearchBar";
 import { FlowContentView } from "./FlowContentView";
 import { SheetView } from "./SheetView";
 import { SlideView } from "./SlideView";
@@ -105,6 +107,48 @@ function ContentRenderer({
 }) {
   const pinchRef = useRef<HTMLDivElement>(null);
   usePinchZoom(pinchRef, scale, onScaleChange);
+
+  // Find-in-document (fixed mode). State lives here unconditionally so
+  // the hooks stay stable across modes; only the fixed branch uses it.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchActiveIdx, setSearchActiveIdx] = useState(0);
+  const fixedForSearch = doc.mode === "fixed" ? (doc.content as FixedContent) : null;
+  const searchMatches = useMemo(
+    () => (fixedForSearch ? findTextMatches(fixedForSearch, searchQuery, scale) : []),
+    [fixedForSearch, searchQuery, scale],
+  );
+  useEffect(() => {
+    if (searchMatches.length === 0 || searchActiveIdx >= searchMatches.length) {
+      setSearchActiveIdx(0);
+    }
+  }, [searchMatches, searchActiveIdx]);
+  const pageRefs = useRef<Array<HTMLDivElement | null>>([]);
+  useEffect(() => {
+    if (!searchOpen || searchMatches.length === 0) return;
+    const m = searchMatches[searchActiveIdx];
+    const el = m ? pageRefs.current[m.pageIdx] : null;
+    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [searchActiveIdx, searchMatches, searchOpen]);
+  // Ctrl/Cmd+F opens search (and Esc closes) for desktop parity with
+  // the editor; the toolbar button covers touch.
+  useEffect(() => {
+    if (doc.mode !== "fixed") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        setSearchOpen(true);
+      } else if (e.key === "Escape" && searchOpen) {
+        setSearchOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [doc.mode, searchOpen]);
+  const activeKey = searchMatches[searchActiveIdx]
+    ? matchKey(searchMatches[searchActiveIdx])
+    : null;
+
   if (doc.mode === "fixed") {
     const fixed = doc.content as FixedContent;
     return (
@@ -115,7 +159,31 @@ function ContentRenderer({
           onFit={onFit}
           layout={layout}
           onLayoutChange={onLayoutChange}
+          searchOpen={searchOpen}
+          onToggleSearch={() => setSearchOpen((o) => !o)}
         />
+        {searchOpen && (
+          <div className="mb-3">
+            <SearchBar
+              query={searchQuery}
+              onQueryChange={(q) => {
+                setSearchQuery(q);
+                setSearchActiveIdx(0);
+              }}
+              totalMatches={searchMatches.length}
+              activeIdx={searchActiveIdx}
+              onPrev={() =>
+                setSearchActiveIdx((i) =>
+                  searchMatches.length === 0 ? 0 : (i - 1 + searchMatches.length) % searchMatches.length
+                )
+              }
+              onNext={() =>
+                setSearchActiveIdx((i) => (searchMatches.length === 0 ? 0 : (i + 1) % searchMatches.length))
+              }
+              onClose={() => setSearchOpen(false)}
+            />
+          </div>
+        )}
         <div
           ref={pinchRef}
           className={
@@ -131,13 +199,24 @@ function ContentRenderer({
           // pinch is handled by usePinchZoom (zooms the doc, not the page).
           style={{ maxHeight: "75vh", touchAction: "pan-x pan-y" }}
         >
-          {fixed.pages.map((page) => (
-            <div key={page.number}>
+          {fixed.pages.map((page, pageIdx) => (
+            <div
+              key={page.number}
+              ref={(el) => {
+                pageRefs.current[pageIdx] = el;
+              }}
+            >
               <div className="label mb-2">
                 page {page.number} · {Math.round(lengthToPx(page.width))}×
                 {Math.round(lengthToPx(page.height))}px
               </div>
-              <FixedPageView page={page} resources={doc.resources} scale={scale} />
+              <FixedPageView
+                page={page}
+                resources={doc.resources}
+                scale={scale}
+                searchMatches={searchMatches.filter((m) => m.pageIdx === pageIdx)}
+                activeMatchKey={activeKey}
+              />
             </div>
           ))}
         </div>
@@ -174,12 +253,16 @@ function ScaleControl({
   onFit,
   layout,
   onLayoutChange,
+  searchOpen,
+  onToggleSearch,
 }: {
   scale: number;
   onScaleChange: (s: number) => void;
   onFit: () => void;
   layout: "list" | "grid";
   onLayoutChange: (l: "list" | "grid") => void;
+  searchOpen: boolean;
+  onToggleSearch: () => void;
 }) {
   const cls = (active: boolean) =>
     `font-mono text-xs px-2 py-1 border transition-colors shrink-0 ${
@@ -198,6 +281,13 @@ function ScaleControl({
       </button>
       <button onClick={() => onLayoutChange("grid")} className={cls(layout === "grid")}>
         ▦ grid
+      </button>
+      <button
+        onClick={onToggleSearch}
+        className={cls(searchOpen)}
+        title="Find text in document (Ctrl+F)"
+      >
+        🔍 find
       </button>
     </div>
   );
