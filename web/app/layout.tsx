@@ -16,6 +16,7 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://getalldocs.com"),
   title: "AllDocs · Universal Document Editor",
   description:
     "Free, no-signup universal document editor and converter. Drop a PDF, DOCX, XLSX, PPTX, Markdown, HTML, EPUB, or image — view it, edit it, export it back.",

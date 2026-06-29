@@ -5,6 +5,19 @@ import { EditorPreviewMock } from "@/components/EditorPreviewMock";
 import { LiveCounters } from "@/components/LiveCounters";
 import { PageViewBeacon } from "@/components/PageViewBeacon";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
+import { SEO_LANDINGS } from "@/lib/seo-landings";
+
+const HOME_JSON_LD = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: "AllDocs",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Web",
+  url: "https://getalldocs.com",
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  description:
+    "Free, no-signup online editor and converter for PDF, Word, Excel, PowerPoint, Markdown, HTML, EPUB, and images.",
+};
 
 export const metadata: Metadata = {
   title: "AllDocs — Edit any document, free, no signup",
@@ -30,12 +43,17 @@ export default function LandingPage() {
     // big tagline, so a slim sticky bar keeps the value-prop visible
     // without eating the scroll area.
     <main className="min-h-screen">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(HOME_JSON_LD) }}
+      />
       <PageViewBeacon page="landing" />
       <SiteHeader compact />
       <Hero />
       <LiveCounters />
       <FormatGrid />
       <ValueProps />
+      <PopularTasks />
       <Comparison />
       <FinalCta />
       <SiteFooter />
@@ -264,6 +282,33 @@ function Comparison() {
               ))}
             </tbody>
           </table>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PopularTasks() {
+  return (
+    <section className="border-b border-border">
+      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+        <div className="label mb-2">popular tasks</div>
+        <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
+          Jump straight to what you need.
+        </h2>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-px bg-border border border-border">
+          {SEO_LANDINGS.map((l) => (
+            <Link
+              key={l.slug}
+              href={`/${l.slug}`}
+              className="bg-surface p-5 hover:bg-elevated transition-colors"
+            >
+              <div className="font-mono text-sm font-bold uppercase tracking-wider text-accent">
+                {l.eyebrow}
+              </div>
+              <div className="mt-2 font-sans text-sm text-fg/70 leading-relaxed">{l.h1}</div>
+            </Link>
+          ))}
         </div>
       </div>
     </section>
