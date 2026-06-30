@@ -120,6 +120,25 @@ textarea {
   }
 }
 
+/* ----- Metric-compatible clone fonts -----
+ * Open (Apache-2.0) families whose metrics match the most common embedded
+ * fonts: Arimo ≈ Arial/Helvetica/Calibri (sans), Tinos ≈ Times/Georgia
+ * (serif), Cousine ≈ Courier/Consolas (mono). Declared so they can sit in
+ * each text run's font fallback chain — when an embedded subset lacks a
+ * typed glyph, or a referenced font isn't installed, the browser uses the
+ * near-identical clone instead of a generic. font-display:swap + lazy
+ * @font-face means a file only downloads when a glyph actually needs it. */
+@font-face { font-family: "AllDocs Sans"; src: url("/fonts/arimo-Regular.ttf"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "AllDocs Sans"; src: url("/fonts/arimo-Bold.ttf"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "AllDocs Sans"; src: url("/fonts/arimo-Italic.ttf"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "AllDocs Sans"; src: url("/fonts/arimo-BoldItalic.ttf"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "AllDocs Serif"; src: url("/fonts/tinos-Regular.ttf"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "AllDocs Serif"; src: url("/fonts/tinos-Bold.ttf"); font-weight: 700; font-style: normal; font-display: swap; }
+@font-face { font-family: "AllDocs Serif"; src: url("/fonts/tinos-Italic.ttf"); font-weight: 400; font-style: italic; font-display: swap; }
+@font-face { font-family: "AllDocs Serif"; src: url("/fonts/tinos-BoldItalic.ttf"); font-weight: 700; font-style: italic; font-display: swap; }
+@font-face { font-family: "AllDocs Mono"; src: url("/fonts/cousine-Regular.ttf"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "AllDocs Mono"; src: url("/fonts/cousine-Bold.ttf"); font-weight: 700; font-style: normal; font-display: swap; }
+
 /* ----- Brutalist primitives ----- */
 @utility label {
   font-family: var(--font-mono);

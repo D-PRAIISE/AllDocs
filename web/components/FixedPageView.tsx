@@ -12,6 +12,7 @@ import {
   lengthToPx,
 } from "@/lib/udm";
 import { type SearchMatch, matchKey } from "@/lib/text-search";
+import { cssFontStack } from "@/lib/font-css";
 
 interface FixedPageViewProps {
   page: Page;
@@ -316,11 +317,7 @@ function AnnotationLayerView({ layer: _layer }: { layer: AnnotationLayer }) {
 }
 
 function cssFontFamily(font: FontResource): string {
-  // Resolution order:
-  //   1. udm-<font_id>: matches the @font-face injected by FontFaceStyles
-  //      when the font has a data_ref (extracted from the source document).
-  //   2. The original family name (system or web font with that name).
-  //   3. Generic sans-serif fallback.
-  const family = font.family.includes(" ") ? `"${font.family}"` : font.family;
-  return `"udm-${font.id}", ${family}, ui-sans-serif, system-ui, sans-serif`;
+  // Embedded subset → original family → metric-compatible clone →
+  // class-correct generic. See lib/font-css.ts cssFontStack.
+  return cssFontStack(font.family, font.id);
 }

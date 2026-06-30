@@ -23,6 +23,7 @@ import {
 import { fitScaleForWidth, useIsMobile } from "@/lib/use-is-mobile";
 import { usePinchZoom } from "@/lib/use-pinch-zoom";
 import { findTextMatches } from "@/lib/text-search";
+import { cssFontStack } from "@/lib/font-css";
 import { SearchBar } from "./SearchBar";
 
 type FamilyClass = "sans" | "serif" | "mono";
@@ -58,10 +59,13 @@ const FAMILY_NAME: Record<FamilyClass, string> = {
   mono: "monospace",
 };
 
+// Used by the text-edit overlay (contenteditable). Leads with the bundled
+// metric-compatible clone so what you type while editing matches what the
+// canvas renders. Keep in sync with lib/font-css.ts.
 const FAMILY_CSS: Record<FamilyClass, string> = {
-  sans: "ui-sans-serif, system-ui, sans-serif",
-  serif: "ui-serif, Georgia, 'Times New Roman', serif",
-  mono: "ui-monospace, 'Courier New', monospace",
+  sans: '"AllDocs Sans", ui-sans-serif, system-ui, sans-serif',
+  serif: '"AllDocs Serif", ui-serif, Georgia, serif',
+  mono: '"AllDocs Mono", ui-monospace, monospace',
 };
 
 /** UDM Length -> PDF points. */
@@ -242,8 +246,11 @@ function konvaFontStyle(font: FontResource | undefined): string {
 
 function konvaFontFamily(font: FontResource | undefined): string {
   if (!font) return "sans-serif";
-  // FontFaceStyles in UdmViewer injects @font-face for udm-<id>.
-  return `udm-${font.id}, ${font.family.includes(" ") ? `"${font.family}"` : font.family}, sans-serif`;
+  // Embedded subset → original family → metric-compatible clone →
+  // class-correct generic. Canvas text honours the CSS fallback chain,
+  // so missing glyphs (e.g. typed while editing) use the near-identical
+  // clone rather than dropping to a generic. See lib/font-css.ts.
+  return cssFontStack(font.family, font.id);
 }
 
 function runKey(pageIdx: number, layerIdx: number, runIdx: number): string {
