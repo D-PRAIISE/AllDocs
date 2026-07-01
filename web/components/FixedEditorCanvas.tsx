@@ -8,6 +8,7 @@ import useImage from "use-image";
 import { ZoomControl } from "./ZoomControl";
 
 import {
+  type ColorRef,
   type Document,
   type FixedContent,
   type FontResource,
@@ -51,6 +52,10 @@ interface EditCommit {
   sizePt: number;
   bold: boolean;
   family: FamilyClass;
+  /** #rrggbb text colour. */
+  colorHex: string;
+  /** 0–100 text opacity. */
+  opacityPct: number;
 }
 
 const FAMILY_NAME: Record<FamilyClass, string> = {
@@ -67,6 +72,38 @@ const FAMILY_CSS: Record<FamilyClass, string> = {
   serif: '"AllDocs Serif", ui-serif, Georgia, serif',
   mono: '"AllDocs Mono", ui-monospace, monospace',
 };
+
+/** Best-effort read of a run colour into a #rrggbb hex + opacity %. */
+function colorToHexAlpha(color: ColorRef | undefined): { hex: string; alphaPct: number } {
+  const lit = color?.literal;
+  if (lit?.kind === "rgb") {
+    const h = (n: number) =>
+      Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+    return {
+      hex: `#${h(lit.r)}${h(lit.g)}${h(lit.b)}`,
+      alphaPct: lit.a !== undefined ? Math.round((lit.a / 255) * 100) : 100,
+    };
+  }
+  if (lit?.kind === "hex") {
+    const raw = lit.hex.replace("#", "").slice(0, 6).padEnd(6, "0");
+    return { hex: `#${raw}`, alphaPct: 100 };
+  }
+  return { hex: "#111111", alphaPct: 100 };
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return { r: 17, g: 17, b: 17 };
+  const n = parseInt(m[1], 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+// Common document text colours. Buttons (not a native <input type=color>)
+// so picking one doesn't blur+commit the contentEditable mid-edit.
+const TEXT_COLORS = [
+  "#000000", "#3a3a3a", "#888888", "#c0392b",
+  "#c2410c", "#15803d", "#2563eb", "#7c3aed",
+];
 
 /** UDM Length -> PDF points. */
 function lengthToPt(len: Length): number {
@@ -651,6 +688,16 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       // FontResource of the right weight/family. The exporters resolve
       // font_id -> FontResource -> a bundled metric-compatible font.
       run.font_id = ensureFont(next, commit.family, commit.bold ? 700 : 400);
+      // Colour + opacity (opacity rides in the colour's alpha channel).
+      const { r, g, b } = hexToRgb(commit.colorHex);
+      const a = Math.round((Math.max(0, Math.min(100, commit.opacityPct)) / 100) * 255);
+      run.color = {
+        literal: a < 255 ? { kind: "rgb", r, g, b, a } : { kind: "rgb", r, g, b },
+      };
+      // Stamp an explicit edit marker so the PDF exporter re-inserts this
+      // run even when only its style changed (colour/size/opacity) and the
+      // text is identical — the patcher's text-diff alone would miss those.
+      run._meta = { ...(run._meta ?? {}), edited: true };
       setEditedKeys((prev) => new Set(prev).add(runKey(pageIdx, layerIdx, runIdx)));
       onChange(next, `edit-text-${pageIdx}-${layerIdx}-${runIdx}`);
     },
@@ -2972,6 +3019,9 @@ function TextEditOverlay({
   const [bold, setBold] = useState((initialFont?.weight ?? 400) >= 600);
   const [family, setFamily] = useState<FamilyClass>(familyClassOf(initialFont));
   const [sizePt, setSizePt] = useState(run ? Math.round(lengthToPt(run.font_size)) : 12);
+  const initialColor = colorToHexAlpha(run?.color);
+  const [colorHex, setColorHex] = useState(initialColor.hex);
+  const [opacityPct, setOpacityPct] = useState(initialColor.alphaPct);
 
   useEffect(() => {
     const el = spanRef.current;
@@ -3006,7 +3056,24 @@ function TextEditOverlay({
 
   if (!run || !geom) return null;
 
-  const commit = () => onCommit(state, { text: valueRef.current, sizePt, bold, family });
+  const commit = () => {
+    // A no-op edit (opened a run and clicked away without changing
+    // anything) must NOT mark the run edited — for OCR text that would
+    // flip the crisp scan to the OCR transcription (which can misread
+    // words). Only commit a real change.
+    const unchanged =
+      valueRef.current === state.initialText &&
+      sizePt === Math.round(lengthToPt(run.font_size)) &&
+      bold === ((initialFont?.weight ?? 400) >= 600) &&
+      family === familyClassOf(initialFont) &&
+      colorHex.toLowerCase() === initialColor.hex.toLowerCase() &&
+      opacityPct === initialColor.alphaPct;
+    if (unchanged) {
+      onCancel();
+      return;
+    }
+    onCommit(state, { text: valueRef.current, sizePt, bold, family, colorHex, opacityPct });
+  };
 
   const spanStyle: CSSProperties = {
     position: "absolute",
@@ -3016,7 +3083,10 @@ function TextEditOverlay({
     lineHeight: 1,
     fontFamily: FAMILY_CSS[family],
     fontWeight: bold ? 700 : 400,
-    color: colorRefToCss(run.color, doc.resources),
+    color: (() => {
+      const { r, g, b } = hexToRgb(colorHex);
+      return `rgba(${r},${g},${b},${opacityPct / 100})`;
+    })(),
     background: "transparent",
     outline: "1px solid var(--color-accent, #fcc46a)",
     outlineOffset: "1px",
@@ -3101,6 +3171,44 @@ function TextEditOverlay({
               {fc[0]}
             </button>
           ))}
+        </div>
+        {/* Text colour swatches */}
+        <div className="flex items-center gap-0.5 ml-1">
+          {TEXT_COLORS.map((c) => (
+            <button
+              key={c}
+              onMouseDown={keepFocus}
+              onClick={() => setColorHex(c)}
+              title={`Colour ${c}`}
+              aria-label={`Text colour ${c}`}
+              className={`w-4 h-5 border ${
+                colorHex.toLowerCase() === c
+                  ? "border-accent ring-1 ring-accent"
+                  : "border-border"
+              }`}
+              style={{ background: c }}
+            />
+          ))}
+        </div>
+        {/* Opacity stepper */}
+        <div className="flex items-center border border-border ml-1" title="Text opacity">
+          <button
+            onMouseDown={keepFocus}
+            onClick={() => setOpacityPct((o) => Math.max(10, o - 10))}
+            className="font-mono text-xs w-5 h-6 text-muted hover:text-fg"
+          >
+            −
+          </button>
+          <span className="font-mono text-[0.6rem] w-8 text-center text-fg tabular-nums">
+            {opacityPct}%
+          </span>
+          <button
+            onMouseDown={keepFocus}
+            onClick={() => setOpacityPct((o) => Math.min(100, o + 10))}
+            className="font-mono text-xs w-5 h-6 text-muted hover:text-fg"
+          >
+            +
+          </button>
         </div>
       </div>
 

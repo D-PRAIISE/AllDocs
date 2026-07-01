@@ -30,6 +30,19 @@ import hashlib
 from typing import Any
 
 
+def _fp_num(v: Any) -> str:
+    """Normalise a number so the fingerprint is stable across JSON
+    serializers. Python emits ``9.0`` for a whole-number float; JS
+    ``JSON.stringify`` emits ``9`` (re-parsed as an int) — they MUST hash
+    identically, or the export route (which re-serialises the UDM) would
+    never match the import-time fingerprint and passthrough would always
+    fail. Non-numbers hash as empty (same as the previous default)."""
+    try:
+        return f"{float(v):.4f}"
+    except (TypeError, ValueError):
+        return ""
+
+
 def compute_fingerprint(udm: dict[str, Any]) -> str:
     """Stable 16-char hex digest of UDM content semantics.
 
@@ -62,10 +75,13 @@ def compute_fingerprint(udm: dict[str, Any]) -> str:
                 for run in layer.get("runs", []):
                     # Text + formatting: a size/bold change with the same
                     # string must still invalidate passthrough so the
-                    # patch exporter re-renders the run.
+                    # patch exporter re-renders the run. (Colour/opacity-only
+                    # edits are handled separately via the _meta.edited
+                    # marker in can_passthrough — see below — so the
+                    # fingerprint formula stays stable across versions.)
                     size = (run.get("font_size") or {}).get("value", "")
                     h.update(
-                        f"t:{run.get('text', '')}|f:{run.get('font_id', '')}|s:{size}\n".encode(
+                        f"t:{run.get('text', '')}|f:{run.get('font_id', '')}|s:{_fp_num(size)}\n".encode(
                             "utf-8"
                         )
                     )
@@ -124,10 +140,24 @@ def attach(
     }
 
 
+def _has_edited_run(udm: dict[str, Any]) -> bool:
+    """True if the client flagged any text run with _meta.edited — a real
+    style/text edit. Style-only edits (colour/opacity) don't change the
+    fingerprint, so this marker is what invalidates passthrough for them."""
+    for page in (udm.get("content") or {}).get("pages") or []:
+        for layer in page.get("layers", []) or []:
+            if layer.get("type") != "text":
+                continue
+            for run in layer.get("runs", []) or []:
+                if (run.get("_meta") or {}).get("edited"):
+                    return True
+    return False
+
+
 def can_passthrough(udm: dict[str, Any]) -> dict[str, Any] | None:
     """Return the passthrough block if and only if the UDM still matches
-    its recorded fingerprint. Returns None otherwise — caller should fall
-    back to the render path.
+    its recorded fingerprint AND no run was explicitly edited. Returns
+    None otherwise — caller should fall back to the render path.
     """
     metadata = udm.get("metadata") or {}
     pt = metadata.get("passthrough")
@@ -136,5 +166,9 @@ def can_passthrough(udm: dict[str, Any]) -> dict[str, Any] | None:
     if not pt.get("source_url") or not pt.get("fingerprint"):
         return None
     if compute_fingerprint(udm) != pt["fingerprint"]:
+        return None
+    # A colour/opacity-only edit keeps the fingerprint identical, so the
+    # client marks the run; honour that so the edit isn't passed through.
+    if _has_edited_run(udm):
         return None
     return pt

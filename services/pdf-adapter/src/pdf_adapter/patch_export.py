@@ -538,7 +538,10 @@ def _diff_ocr_runs(udm: dict[str, Any]) -> dict[int, list[dict[str, Any]]]:
                 meta = run.get("_meta") or {}
                 original = meta.get("ocr_text")
                 current = run.get("text", "")
-                if original is None or original == current:
+                # Re-insert when the text changed OR the client flagged a
+                # style-only edit (colour/size/opacity) via _meta.edited —
+                # a text diff alone would miss those.
+                if not meta.get("edited") and (original is None or original == current):
                     continue  # unedited
 
                 x = float(run["x"]["value"])
@@ -632,7 +635,9 @@ def _diff_runs(
                 used_spans.add(match_idx)
                 src_span = src_spans[match_idx]
 
-                if src_span["text"] == udm_text:
+                # Skip only when the text is unchanged AND the client didn't
+                # flag a style-only edit (colour/size/opacity) via _meta.edited.
+                if src_span["text"] == udm_text and not (run.get("_meta") or {}).get("edited"):
                     continue  # No change to this run
 
                 bbox = src_span["bbox"]
@@ -1150,6 +1155,7 @@ def _insert_replacement(
     new_text: str = edit["new_text"]
     fontfile = _pick_font_for_text(font_resource, new_text, base_dir)
     color = _color_rgb01(edit["color"])
+    alpha = _color_alpha(edit["color"])
     x, y = edit["baseline"]
     size = edit["font_size"]
 
@@ -1168,6 +1174,7 @@ def _insert_replacement(
             new_text,
             fontsize=size,
             color=color,
+            fill_opacity=alpha,
             fontname=f"udm_patch_{edit.get('font_id') or 'unknown'}",
         )
     else:
@@ -1176,6 +1183,7 @@ def _insert_replacement(
             new_text,
             fontsize=size,
             color=color,
+            fill_opacity=alpha,
             fontname=_base14_for(font_resource),
         )
 
@@ -1251,6 +1259,18 @@ def _base14_for(font_resource: dict[str, Any] | None) -> str:
     if is_italic:
         return "heit"
     return "helv"
+
+
+def _color_alpha(color_ref: dict[str, Any]) -> float:
+    """Text opacity (0..1) from a colour ref's alpha channel (0..255).
+    Defaults to fully opaque when no alpha is present."""
+    literal = (color_ref or {}).get("literal") or {}
+    if literal.get("kind") == "rgb" and literal.get("a") is not None:
+        try:
+            return max(0.0, min(1.0, float(literal["a"]) / 255.0))
+        except (TypeError, ValueError):
+            return 1.0
+    return 1.0
 
 
 def _color_rgb01(color_ref: dict[str, Any]) -> tuple[float, float, float]:
