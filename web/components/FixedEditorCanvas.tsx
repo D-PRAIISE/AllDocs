@@ -51,6 +51,7 @@ interface EditCommit {
   text: string;
   sizePt: number;
   bold: boolean;
+  italic: boolean;
   family: FamilyClass;
   /** #rrggbb text colour. */
   colorHex: string;
@@ -120,21 +121,26 @@ function familyClassOf(font: FontResource | undefined): FamilyClass {
   return "sans";
 }
 
-/** Find or create a substituted FontResource for (family, weight) on a
- * mutable doc clone. Returns its id. */
-function ensureFont(doc: Document, family: FamilyClass, weight: number): string {
+/** Find or create a substituted FontResource for (family, weight, style)
+ * on a mutable doc clone. Returns its id. */
+function ensureFont(
+  doc: Document,
+  family: FamilyClass,
+  weight: number,
+  style: "normal" | "italic" = "normal",
+): string {
   const familyName = FAMILY_NAME[family];
   const existing = doc.resources.fonts.find(
-    (f) => f.family === familyName && f.weight === weight && f.style === "normal"
+    (f) => f.family === familyName && f.weight === weight && f.style === style
   );
   if (existing) return existing.id;
-  const id = `font_user_${family}_${weight}`;
+  const id = `font_user_${family}_${weight}_${style}`;
   if (!doc.resources.fonts.some((f) => f.id === id)) {
     doc.resources.fonts.push({
       id,
       family: familyName,
       weight,
-      style: "normal",
+      style,
       source: "substituted",
     });
   }
@@ -687,7 +693,12 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       // Bold + family are expressed by pointing the run at a substituted
       // FontResource of the right weight/family. The exporters resolve
       // font_id -> FontResource -> a bundled metric-compatible font.
-      run.font_id = ensureFont(next, commit.family, commit.bold ? 700 : 400);
+      run.font_id = ensureFont(
+        next,
+        commit.family,
+        commit.bold ? 700 : 400,
+        commit.italic ? "italic" : "normal",
+      );
       // Colour + opacity (opacity rides in the colour's alpha channel).
       const { r, g, b } = hexToRgb(commit.colorHex);
       const a = Math.round((Math.max(0, Math.min(100, commit.opacityPct)) / 100) * 255);
@@ -3017,6 +3028,9 @@ function TextEditOverlay({
 
   const initialFont = run ? doc.resources.fonts.find((f) => f.id === run.font_id) : undefined;
   const [bold, setBold] = useState((initialFont?.weight ?? 400) >= 600);
+  const [italic, setItalic] = useState(
+    initialFont?.style === "italic" || initialFont?.style === "oblique"
+  );
   const [family, setFamily] = useState<FamilyClass>(familyClassOf(initialFont));
   const [sizePt, setSizePt] = useState(run ? Math.round(lengthToPt(run.font_size)) : 12);
   const initialColor = colorToHexAlpha(run?.color);
@@ -3065,6 +3079,7 @@ function TextEditOverlay({
       valueRef.current === state.initialText &&
       sizePt === Math.round(lengthToPt(run.font_size)) &&
       bold === ((initialFont?.weight ?? 400) >= 600) &&
+      italic === (initialFont?.style === "italic" || initialFont?.style === "oblique") &&
       family === familyClassOf(initialFont) &&
       colorHex.toLowerCase() === initialColor.hex.toLowerCase() &&
       opacityPct === initialColor.alphaPct;
@@ -3072,7 +3087,7 @@ function TextEditOverlay({
       onCancel();
       return;
     }
-    onCommit(state, { text: valueRef.current, sizePt, bold, family, colorHex, opacityPct });
+    onCommit(state, { text: valueRef.current, sizePt, bold, italic, family, colorHex, opacityPct });
   };
 
   const spanStyle: CSSProperties = {
@@ -3083,6 +3098,7 @@ function TextEditOverlay({
     lineHeight: 1,
     fontFamily: FAMILY_CSS[family],
     fontWeight: bold ? 700 : 400,
+    fontStyle: italic ? "italic" : "normal",
     color: (() => {
       const { r, g, b } = hexToRgb(colorHex);
       return `rgba(${r},${g},${b},${opacityPct / 100})`;
@@ -3135,6 +3151,18 @@ function TextEditOverlay({
           }`}
         >
           B
+        </button>
+        <button
+          onMouseDown={keepFocus}
+          onClick={() => setItalic((i) => !i)}
+          title="Italic"
+          className={`font-mono text-xs italic w-6 h-6 border ml-0.5 ${
+            italic
+              ? "bg-accent text-accent-fg border-accent"
+              : "bg-transparent text-muted border-border hover:text-fg"
+          }`}
+        >
+          I
         </button>
         <div className="flex items-center border border-border ml-1">
           <button

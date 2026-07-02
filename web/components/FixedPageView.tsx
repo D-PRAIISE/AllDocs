@@ -11,6 +11,8 @@ import {
   colorRefToCss,
   lengthToPx,
 } from "@/lib/udm";
+import { type ReactNode } from "react";
+
 import { type SearchMatch, matchKey } from "@/lib/text-search";
 import { cssFontStack } from "@/lib/font-css";
 
@@ -141,10 +143,14 @@ function TextRunView({
   resources: Resources;
   scale: number;
 }) {
-  // OCR runs sit on top of a scanned image that already shows the text.
-  // The read-only viewer would just double it up, so skip rendering them.
-  // (The editor renders them as an invisible clickable overlay instead.)
-  if (run.ocr) return null;
+  // OCR runs sit on top of a scanned image that already shows the text, so
+  // the viewer normally hides them (the scan is crisper). BUT an *edited*
+  // OCR run must render — otherwise a saved edit would vanish under the
+  // scan (users think their edit didn't save). Edited OCR runs draw a
+  // background patch over the original scanned pixels, then the new text —
+  // matching the editor and the PDF exporter.
+  const editedOcr = !!(run.ocr && run._meta?.edited);
+  if (run.ocr && !editedOcr) return null;
 
   const x = lengthToPx(run.x) * scale;
   const y = lengthToPx(run.y) * scale;
@@ -159,25 +165,54 @@ function TextRunView({
   // Approximate baseline → top by subtracting ~0.8 * fontSize.
   const top = y - fontSize * 0.8;
 
+  // Mask box covering the original scanned word (for edited OCR runs).
+  let mask: ReactNode = null;
+  if (editedOcr) {
+    const bg = run._meta?.ocr_bg as number[] | undefined;
+    const bgCss = bg && bg.length >= 3 ? `rgb(${bg[0]},${bg[1]},${bg[2]})` : "#ffffff";
+    const wPt = run._meta?.ocr_width as number | undefined;
+    const maskW =
+      typeof wPt === "number"
+        ? wPt * (96 / 72) * scale
+        : Math.max(run.text.length, 1) * fontSize * 0.55;
+    const pad = fontSize * 0.12;
+    mask = (
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: `${x - pad}px`,
+          top: `${top - fontSize * 0.1}px`,
+          width: `${maskW + pad * 2}px`,
+          height: `${fontSize * 1.25}px`,
+          background: bgCss,
+        }}
+      />
+    );
+  }
+
   return (
-    <span
-      style={{
-        position: "absolute",
-        left: `${x}px`,
-        top: `${top}px`,
-        fontSize: `${fontSize}px`,
-        fontFamily,
-        fontWeight,
-        fontStyle,
-        color,
-        whiteSpace: "pre",
-        lineHeight: 1,
-        transform: run.rotation ? `rotate(${run.rotation}deg)` : undefined,
-        transformOrigin: "left baseline",
-      }}
-    >
-      {run.text}
-    </span>
+    <>
+      {mask}
+      <span
+        style={{
+          position: "absolute",
+          left: `${x}px`,
+          top: `${top}px`,
+          fontSize: `${fontSize}px`,
+          fontFamily,
+          fontWeight,
+          fontStyle,
+          color,
+          whiteSpace: "pre",
+          lineHeight: 1,
+          transform: run.rotation ? `rotate(${run.rotation}deg)` : undefined,
+          transformOrigin: "left baseline",
+        }}
+      >
+        {run.text}
+      </span>
+    </>
   );
 }
 
