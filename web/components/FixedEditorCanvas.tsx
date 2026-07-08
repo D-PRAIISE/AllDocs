@@ -3,6 +3,7 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Group, Image as KonvaImage, Layer, Line as KonvaLine, Rect as KonvaRect, Stage, Text as KonvaText } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
+import type { Stage as KonvaStageType } from "konva/lib/Stage";
 import useImage from "use-image";
 
 import { ZoomControl } from "./ZoomControl";
@@ -25,6 +26,7 @@ import { fitScaleForWidth, useIsMobile } from "@/lib/use-is-mobile";
 import { usePinchZoom } from "@/lib/use-pinch-zoom";
 import { findTextMatches } from "@/lib/text-search";
 import { cssFontStack } from "@/lib/font-css";
+import { removeBackground } from "@/lib/image-lift";
 import { SearchBar } from "./SearchBar";
 
 type FamilyClass = "sans" | "serif" | "mono";
@@ -44,7 +46,8 @@ type EditorMode =
   | "ink"
   | "add-field-text"
   | "add-field-checkbox"
-  | "add-field-radio";
+  | "add-field-radio"
+  | "lift-region";
 
 /** What a text edit commits: the new string plus its formatting. */
 interface EditCommit {
@@ -758,6 +761,63 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     setLibraryOpen(true);
   }, [doc, selected]);
 
+  // A lifted region (signature/stamp) arrives as a page-pixel capture;
+  // knock its paper background out to alpha and shelve it in the library
+  // ready to place anywhere — including after importing another document.
+  const liftRegionToLibrary = useCallback(async (rawDataUrl: string) => {
+    try {
+      const lifted = await removeBackground(rawDataUrl);
+      setLibrary((prev) => [
+        ...prev,
+        {
+          id: `lib_${Date.now()}_${prev.length}`,
+          dataUrl: lifted.dataUrl,
+          width: lifted.width,
+          height: lifted.height,
+          format: "png",
+          label: `lift #${prev.length + 1}`,
+        },
+      ]);
+      setLibraryOpen(true);
+    } catch {
+      /* tiny/degenerate region — nothing to add */
+    }
+    // One-shot tool: a lift is a deliberate act, drop back to normal mode.
+    setMode("none");
+  }, []);
+
+  // Bring an outside image into the library — the cross-document path
+  // (e.g. a photo of a signature, or a stamp exported from another doc).
+  // `clearBg` runs the same background knockout used for lifted regions.
+  const addFileToLibrary = useCallback(async (clearBg: boolean) => {
+    const picked = await pickImageFile();
+    if (!picked) return;
+    let { dataUrl, width, height, format } = picked;
+    if (clearBg) {
+      try {
+        const lifted = await removeBackground(dataUrl);
+        dataUrl = lifted.dataUrl;
+        width = lifted.width;
+        height = lifted.height;
+        format = "png";
+      } catch {
+        /* keep the original if knockout fails */
+      }
+    }
+    setLibrary((prev) => [
+      ...prev,
+      {
+        id: `lib_${Date.now()}_${prev.length}`,
+        dataUrl,
+        width,
+        height,
+        format,
+        label: clearBg ? `signature #${prev.length + 1}` : `image #${prev.length + 1}`,
+      },
+    ]);
+    setLibraryOpen(true);
+  }, []);
+
   // Place a library item onto the given page at a sensible position.
   const placeLibraryItem = useCallback(
     (item: LibraryItem, pageIdx: number) => {
@@ -786,6 +846,27 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     },
     [doc, onChange]
   );
+
+  // The page currently most visible in the scroll viewport — where a
+  // "place" from the library should land (signing page 6 shouldn't put
+  // the signature on page 1).
+  const mostVisiblePage = useCallback((): number => {
+    const container = pinchRef.current;
+    if (!container) return 0;
+    const crect = container.getBoundingClientRect();
+    let best = 0;
+    let bestVisible = -1;
+    pageRefs.current.forEach((el, i) => {
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const visible = Math.min(r.bottom, crect.bottom) - Math.max(r.top, crect.top);
+      if (visible > bestVisible) {
+        bestVisible = visible;
+        best = i;
+      }
+    });
+    return best;
+  }, []);
 
   const downloadLibraryItem = useCallback((item: LibraryItem) => {
     const a = document.createElement("a");
@@ -821,6 +902,7 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   // One exclusive editor tool at a time.
   const [mode, setMode] = useState<EditorMode>("none");
   const placeMode = mode === "region-image";
+  const liftMode = mode === "lift-region";
   const recolorMode = mode === "recolor";
   const addTextMode = mode === "add-text";
   const addImageMode = mode === "add-image";
@@ -1427,17 +1509,17 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         </div>
       )}
       <PageOpsPanel doc={doc} onChange={onChange} />
-      {libraryOpen && library.length > 0 ? (
+      {libraryOpen ? (
         <ImageLibraryPanel
           items={library}
           onPlace={(item) => {
-            // Place on the highest-numbered page that's visible in the
-            // editor's scroll viewport. Simpler: just page 0 for now;
-            // the placed image is draggable.
-            placeLibraryItem(item, 0);
+            // Land on whichever page the user is actually looking at;
+            // the placed image is draggable for fine positioning.
+            placeLibraryItem(item, mostVisiblePage());
           }}
           onDownload={downloadLibraryItem}
           onRemove={removeLibraryItem}
+          onAddFile={addFileToLibrary}
           onClose={() => setLibraryOpen(false)}
         />
       ) : null}
@@ -1512,6 +1594,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
               editing={editing}
               editedKeys={editedKeys}
               placeMode={placeMode}
+              liftMode={liftMode}
+              onLiftRegion={liftRegionToLibrary}
               recolorMode={recolorMode}
               addTextMode={addTextMode}
               addImageMode={addImageMode}
@@ -1594,6 +1678,7 @@ function ImageLibraryPanel({
   onPlace,
   onDownload,
   onRemove,
+  onAddFile,
   onClose,
 }: {
   items: Array<{
@@ -1607,22 +1692,47 @@ function ImageLibraryPanel({
   onPlace: (item: { id: string; dataUrl: string; width: number; height: number; format: string; label: string }) => void;
   onDownload: (item: { id: string; dataUrl: string; width: number; height: number; format: string; label: string }) => void;
   onRemove: (id: string) => void;
+  /** Import an outside image; `clearBg=true` knocks its background out
+   * (the cross-document signature path). */
+  onAddFile: (clearBg: boolean) => void;
   onClose: () => void;
 }) {
   const btn =
     "font-mono text-[0.65rem] uppercase tracking-wider px-1.5 py-0.5 border border-border text-muted hover:text-fg hover:border-fg";
   return (
     <div className="border border-border bg-surface px-3 py-2">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
         <span className="label">library · {items.length}</span>
-        <button
-          className={btn}
-          onClick={onClose}
-          aria-label="Close library panel"
-        >
-          ✕
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            className={btn}
+            onClick={() => onAddFile(true)}
+            title="Import a photo/scan of a signature or stamp — its background is made transparent"
+          >
+            ＋ signature
+          </button>
+          <button
+            className={btn}
+            onClick={() => onAddFile(false)}
+            title="Import an image as-is (background kept)"
+          >
+            ＋ image
+          </button>
+          <button
+            className={btn}
+            onClick={onClose}
+            aria-label="Close library panel"
+          >
+            ✕
+          </button>
+        </div>
       </div>
+      {items.length === 0 ? (
+        <div className="font-sans text-xs text-muted leading-relaxed py-1">
+          Lift a signature or stamp off the page with the ✂ lift tool, or
+          import one from a file — then place it on any page.
+        </div>
+      ) : null}
       <div className="flex flex-wrap gap-3">
         {items.map((item) => (
           <div
@@ -1635,7 +1745,14 @@ function ImageLibraryPanel({
               src={item.dataUrl}
               alt={item.label}
               className="w-full border border-border"
-              style={{ height: 90, objectFit: "contain", background: "#fff" }}
+              // Checkerboard behind the thumb so a knocked-out background
+              // is visibly transparent rather than looking plain white.
+              style={{
+                height: 90,
+                objectFit: "contain",
+                background:
+                  "repeating-conic-gradient(#e2e2e2 0% 25%, #ffffff 0% 50%) 0 0 / 12px 12px",
+              }}
             />
             <div
               className="font-mono text-[0.6rem] text-subtle truncate"
@@ -1647,7 +1764,7 @@ function ImageLibraryPanel({
               <button
                 className={btn + " flex-1"}
                 onClick={() => onPlace(item)}
-                title="Place on page 1"
+                title="Place on the page you're viewing (drag to fine-position)"
               >
                 ↘ place
               </button>
@@ -1793,6 +1910,8 @@ function FixedPageEditor({
   onCommitEdit,
   onReplaceImage,
   placeMode,
+  liftMode,
+  onLiftRegion,
   onPlaceRegion,
   recolorMode,
   onRecolorShape,
@@ -1837,6 +1956,8 @@ function FixedPageEditor({
   onCommitEdit: (s: EditingState, commit: EditCommit) => void;
   onReplaceImage: (imageId: string) => void;
   placeMode: boolean;
+  liftMode: boolean;
+  onLiftRegion: (dataUrl: string) => void;
   onPlaceRegion: (rect: { x: number; y: number; w: number; h: number }) => void;
   recolorMode: boolean;
   onRecolorShape: (layerIdx: number) => void;
@@ -1895,6 +2016,10 @@ function FixedPageEditor({
   const pageWPt = page.width.unit === "pt" ? page.width.value : lengthToPx(page.width) / (96 / 72);
   const pageHPt = page.height.unit === "pt" ? page.height.value : lengthToPx(page.height) / (96 / 72);
 
+  // Stage handle for pixel capture (the ✂ lift tool rasterizes the
+  // selected region straight off the rendered canvas).
+  const stageRef = useRef<KonvaStageType | null>(null);
+
   // Page rotation: the inner W×H surface is rotated about its centre and
   // re-centred inside an outer box whose dimensions account for the
   // rotated footprint (swapped for 90° / 270°).
@@ -1918,6 +2043,7 @@ function FixedPageEditor({
         }}
       >
       <Stage
+        ref={stageRef}
         width={w}
         height={h}
         onMouseDown={(e: KonvaEventObject<MouseEvent>) => {
@@ -2059,6 +2185,32 @@ function FixedPageEditor({
         />
       ) : null}
       {placeMode ? <RegionSelectOverlay onComplete={onPlaceRegion} /> : null}
+      {liftMode ? (
+        <RegionSelectOverlay
+          accentColor="#00d9a5"
+          onComplete={(rect) => {
+            const stage = stageRef.current;
+            if (!stage) return;
+            // Capture at ~300 DPI equivalent regardless of the current
+            // zoom, so a lifted stamp keeps its quality when re-placed
+            // larger. Stage px per pt = (96/72)·scale → ratio 3.125/scale.
+            const pixelRatio = Math.min(8, Math.max(1.5, 3.125 / scale));
+            try {
+              const dataUrl = stage.toDataURL({
+                x: rect.x,
+                y: rect.y,
+                width: rect.w,
+                height: rect.h,
+                pixelRatio,
+                mimeType: "image/png",
+              });
+              onLiftRegion(dataUrl);
+            } catch {
+              /* tainted canvas or degenerate rect — nothing to lift */
+            }
+          }}
+        />
+      ) : null}
       {addRectMode ? (
         <RegionSelectOverlay onComplete={onAddRect} accentColor="#cbd5e1" />
       ) : null}
@@ -2086,6 +2238,7 @@ function FixedPageEditor({
         showAutoDetected={showAutoDetected}
       />
       {!placeMode &&
+      !liftMode &&
       !addTextMode &&
       !addImageMode &&
       !addRectMode &&
@@ -3277,6 +3430,8 @@ const MODE_HINT: Record<EditorMode, string> = {
   "add-field-text": "click where you want the new text field",
   "add-field-checkbox": "click where you want the new checkbox",
   "add-field-radio": "click to place a radio in the current group · pick the group from the tools row",
+  "lift-region":
+    "drag a box around a signature or stamp — it's lifted with a transparent background into the library",
 };
 
 function EditorHeader({
@@ -3339,6 +3494,7 @@ function EditorHeader({
         { m: "add-rect", label: "▭ rectangle" },
         { m: "recolor", label: "◐ recolor" },
         { m: "region-image", label: "⊕ replace region" },
+        { m: "lift-region", label: "✂ lift" },
       ],
     },
     {
@@ -3408,15 +3564,13 @@ function EditorHeader({
             ↥ library
           </button>
         ) : null}
-        {libraryCount > 0 ? (
-          <button
-            onClick={onToggleLibrary}
-            className={modeBtn(libraryOpen)}
-            title="Toggle the session image library"
-          >
-            {libraryOpen ? "▼" : "▶"} library ({libraryCount})
-          </button>
-        ) : null}
+        <button
+          onClick={onToggleLibrary}
+          className={modeBtn(libraryOpen)}
+          title="Session image library — lifted signatures/stamps + imported images"
+        >
+          {libraryOpen ? "▼" : "▶"} library ({libraryCount})
+        </button>
         {autoDetectedCount > 0 ? (
           <button
             onClick={onToggleAutoDetected}
