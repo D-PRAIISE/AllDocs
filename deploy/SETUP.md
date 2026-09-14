@@ -146,22 +146,40 @@ In the Cloudflare dashboard for **getalldocs.com**:
 
 **b. SSL/TLS mode** (SSL/TLS → Overview): set to **Full (strict)**.
 
-**c. Origin certificate** (SSL/TLS → Origin Server → Create
-Certificate): accept the defaults (covers `getalldocs.com` +
-`*.getalldocs.com`, 15-year validity). Copy the two blocks onto the
-server:
+**c. Origin certificate** — **superseded; use Let's Encrypt instead.**
+
+This step used to have you paste a 15-year Cloudflare Origin Certificate
+onto the server. That private key lived on the Hetzner box that was lost
+in Sept 2026 — precisely the failure mode a short-lived, auto-renewing
+cert avoids. The live box now issues its own:
 
 ```bash
-# Paste the "Origin Certificate" block here:
-nano /etc/caddy/cf-origin.pem
-# Paste the "Private Key" block here:
-nano /etc/caddy/cf-origin.key
-chmod 600 /etc/caddy/cf-origin.key
+sudo certbot certonly --webroot -w /var/www/html     -d getalldocs.com -d www.getalldocs.com     --cert-name getalldocs.com     --deploy-hook 'systemctl reload nginx'
 ```
+
+Use `--webroot`, not `--nginx`, so certbot never rewrites the
+hand-written vhost. Cloudflare exempts `/.well-known/acme-challenge/`
+from "Always Use HTTPS", so HTTP-01 validates fine with the orange cloud
+on — **but the `:80` server block must serve that path above its HTTPS
+redirect**, or every renewal silently fails. Cloudflare SSL/TLS mode
+stays **Full (strict)**.
 
 ---
 
-## 7. Caddy reverse proxy
+## 7. Reverse proxy
+
+> **The live box uses nginx, not Caddy.** AllDocs is co-hosted with
+> livebooost.com on an Oracle Cloud ARM box; nginx already owns :80/:443
+> there, so installing Caddy would fight it for the port. The live vhost
+> is checked in at `deploy/nginx-alldocs.conf` (install it as
+> `/etc/nginx/sites-available/zz-alldocs` — the `zz-` prefix keeps the
+> co-tenant as `default_server` on :443). It reproduces both behaviours
+> that matter: `/uploads/*` served off disk, and the real client IP taken
+> from Cloudflare's `CF-Connecting-IP`.
+>
+> The Caddy path below is kept for a future dedicated box.
+
+### 7a. Caddy (only on a box where nothing else owns :443)
 
 ```bash
 mkdir -p /var/log/caddy

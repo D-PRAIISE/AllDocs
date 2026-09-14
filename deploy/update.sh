@@ -14,19 +14,27 @@
 #   4. refreshes Python deps + reinstalls/rebuilds the web app
 #   5. restarts the service + health-checks
 #
+# The box is SHARED with livebooost.com (nginx :80/:443, a pm2 Node app on
+# :5000, MongoDB in Docker) and has a single ARM core, so the heavy steps
+# run under `nice` to keep that site responsive during a deploy.
+#
 # Override the target with env vars if your server/key differ:
 #   ALLDOCS_HOST=1.2.3.4 ALLDOCS_KEY=~/.ssh/mykey bash deploy/update.sh
 set -euo pipefail
 
-HOST="${ALLDOCS_HOST:-167.233.29.231}"
-KEY="${ALLDOCS_KEY:-$HOME/.ssh/alldocs_hetzner}"
+HOST="${ALLDOCS_HOST:-89.168.74.108}"
+KEY="${ALLDOCS_KEY:-$HOME/.ssh/livebooost_key}"
+SSH_USER="${ALLDOCS_SSH_USER:-ubuntu}"
 TARBALL="alldocs-deploy.$(date +%s).tar.gz"
 
 # Functions (not string vars) so a space in $KEY / $HOME doesn't
 # word-split and break the command.
-ssh_run() { ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "root@$HOST" "$@"; }
+ssh_run() { ssh -i "$KEY" -o StrictHostKeyChecking=accept-new "$SSH_USER@$HOST" "$@"; }
 
 echo "==> Packaging working tree..."
+# NOTE: the Rust build dir is ./core/target, NOT ./core/udm/target. Getting
+# that wrong shipped ~293 MB of build artifacts on every single deploy
+# (103 MB compressed vs 751 KB). Keep both spellings excluded.
 tar czf "/tmp/$TARBALL" \
   --exclude='./.git' \
   --exclude='./node_modules' \
@@ -37,37 +45,42 @@ tar czf "/tmp/$TARBALL" \
   --exclude='./audit' \
   --exclude='./tickets' \
   --exclude='./telemetry' \
+  --exclude='./core/target' \
   --exclude='./core/udm/target' \
   --exclude='./target' \
-  --exclude='./tests/fixtures/tessdata' \
+  --exclude='./tests/fixtures' \
   --exclude='*/__pycache__' \
   --exclude='*.pyc' \
   .
 
 echo "==> Uploading to $HOST..."
-scp -i "$KEY" -o StrictHostKeyChecking=accept-new "/tmp/$TARBALL" "root@$HOST:/tmp/$TARBALL"
+scp -i "$KEY" -o StrictHostKeyChecking=accept-new "/tmp/$TARBALL" "$SSH_USER@$HOST:/tmp/$TARBALL"
 rm -f "/tmp/$TARBALL"
 
 echo "==> Extracting + rebuilding on server..."
 # shellcheck disable=SC2087
 ssh_run bash -s <<REMOTE
 set -euo pipefail
-tar xzf "/tmp/$TARBALL" -C /opt/alldocs
-rm -f "/tmp/$TARBALL"
+sudo tar xzf "/tmp/$TARBALL" -C /opt/alldocs
+sudo rm -f "/tmp/$TARBALL"
+sudo chown -R alldocs:alldocs /opt/alldocs
 
 echo "  - python deps (only reinstalls if changed)"
-/opt/alldocs/venv/bin/pip install -q -r /opt/alldocs/deploy/requirements.txt
+sudo -u alldocs /opt/alldocs/venv/bin/pip install -q -r /opt/alldocs/deploy/requirements.txt
 
 echo "  - web install + build"
 cd /opt/alldocs/web
-pnpm install --silent
-pnpm build
+sudo -u alldocs env HOME=/opt/alldocs nice -n 15 pnpm install --silent
+sudo -u alldocs env HOME=/opt/alldocs NODE_ENV=production nice -n 15 pnpm build
 
 echo "  - fixing ownership"
-chown -R alldocs:alldocs /opt/alldocs
+sudo chown -R alldocs:alldocs /opt/alldocs
+# nginx (www-data) serves /uploads/* straight off disk and must be able to
+# traverse into the app dir.
+sudo chmod 755 /opt/alldocs
 
 echo "  - restarting service"
-systemctl restart alldocs
+sudo systemctl restart alldocs
 sleep 3
 systemctl is-active alldocs
 REMOTE
