@@ -32,12 +32,15 @@ Environment=NODE_ENV=production
 Environment=PORT=3000
 
 # --- AllDocs production config (see .env.example) ---
-# Change the salt so audit-log IP hashes are unique to this instance.
-Environment=ALLDOCS_IP_HASH_SALT=CHANGE_ME_TO_A_RANDOM_STRING
-# Admin dashboard password (/admin). Leave unset to DISABLE admin
-# entirely (every admin route returns 503). Set to a long random
-# string to enable the dashboard.
-Environment=ALLDOCS_ADMIN_PASSWORD=CHANGE_ME_TO_AN_ADMIN_PASSWORD
+# Secrets (ALLDOCS_ADMIN_PASSWORD, ALLDOCS_IP_HASH_SALT) live in
+# /etc/alldocs.env at 0600 root:root — NOT as inline Environment= lines.
+# `systemctl show -p Environment` hands inline values to ANY user on the
+# box (verified: even `nobody` could read the admin password), which
+# matters whenever the host is shared. EnvironmentFile contents are read
+# by systemd at spawn time and are not exposed that way. systemd reads
+# the file as root, so the `alldocs` user needs no access to it.
+# See SETUP.md step 5 for creating it.
+EnvironmentFile=/etc/alldocs.env
 # Optional overrides (defaults shown):
 # Environment=ALLDOCS_MAX_UPLOAD_MB=200
 # Environment=ALLDOCS_UPLOAD_TTL_HOURS=24

@@ -116,9 +116,16 @@ chown -R alldocs:alldocs /opt/alldocs
 ## 5. Run it under systemd
 
 ```bash
-# Edit the unit first — set a random ALLDOCS_IP_HASH_SALT:
-sed -i "s/CHANGE_ME_TO_A_RANDOM_STRING/$(openssl rand -hex 16)/" \
-    /opt/alldocs/deploy/alldocs.service
+# Secrets go in a protected EnvironmentFile, never inline in the unit —
+# `systemctl show -p Environment` would otherwise expose them to every
+# user on the box.
+install -m 600 -o root -g root /dev/null /etc/alldocs.env
+cat > /etc/alldocs.env <<ENV
+ALLDOCS_IP_HASH_SALT=$(openssl rand -hex 16)
+ALLDOCS_ADMIN_PASSWORD=$(openssl rand -hex 24)
+ENV
+# Omit ALLDOCS_ADMIN_PASSWORD entirely to DISABLE /admin (fails closed:
+# every admin route returns 503).
 
 cp /opt/alldocs/deploy/alldocs.service /etc/systemd/system/alldocs.service
 systemctl daemon-reload
@@ -130,6 +137,11 @@ curl -s http://127.0.0.1:3000/api/health
 ```
 
 You should see `{"status":"ok",...}`.
+
+To rotate the admin password later, edit `/etc/alldocs.env` and
+`systemctl restart alldocs` — no `daemon-reload` needed. The session
+signing key is derived from the password (`web/lib/admin-auth.ts`), so
+changing it invalidates every existing admin session automatically.
 
 ---
 
