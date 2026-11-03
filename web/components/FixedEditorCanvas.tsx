@@ -403,9 +403,12 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   const [editedKeys, setEditedKeys] = useState<ReadonlySet<string>>(new Set());
   // Auto-detected form fields (Word-export style) are convenient on
   // real forms but noisy on prose docs that incidentally have rect
-  // shapes. Defaults to on so the magic-just-works case keeps working;
-  // toggle in the header switches them off without re-importing.
-  const [showAutoDetected, setShowAutoDetected] = useState(true);
+  // shapes — and the noisy case is the common one, because most
+  // documents people open are prose, not forms. So this defaults to
+  // OFF: the document opens looking like the document, and the header
+  // toggle switches the detected fields on when they're actually
+  // wanted. No re-import needed either way.
+  const [showAutoDetected, setShowAutoDetected] = useState(false);
   const autoDetectedCount = useMemo(() => {
     let n = 0;
     for (const page of fixed.pages) {
