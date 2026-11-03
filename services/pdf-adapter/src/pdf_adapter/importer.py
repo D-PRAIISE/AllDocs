@@ -258,6 +258,60 @@ def _apply_ocr(
         pages[page_idx]["layers"].append({"type": "text", "runs": runs})
 
 
+def _image_bytes_preserving_alpha(
+    doc: pymupdf.Document, xref: int
+) -> tuple[bytes, str]:
+    """Return ``(bytes, extension)`` for an image XObject, keeping any
+    soft-mask transparency.
+
+    ``extract_image`` hands back the BASE image stream only. For an image
+    carrying an ``/SMask`` — the usual way a faint watermark or a logo
+    with a knocked-out background is built — the alpha channel is
+    silently dropped, so a translucent watermark arrives in the editor as
+    a fully opaque block that buries the page behind it. The page's
+    ExtGState ``ca`` can't rescue it either: masked watermarks typically
+    leave ``ca`` at 1.0 and put all the faintness in the mask.
+
+    Masked images get re-encoded as RGBA PNG. Unmasked photos keep their
+    original (usually far smaller) bytes — this costs size only where it
+    buys correctness.
+    """
+    info = doc.extract_image(xref)
+    smask_xref = info.get("smask")
+    if not smask_xref:
+        return info["image"], info["ext"]
+    try:
+        # Colour plane. Where the mask carries /Matte the stored samples
+        # are premultiplied against the matte colour — which is why the
+        # raw JPEG of a faint watermark looks nearly black — and Pixmap
+        # undoes that, handing back true colour.
+        pix = pymupdf.Pixmap(doc, xref)
+        if pix.colorspace is not None and pix.colorspace.n not in (1, 3):
+            # PNG carries gray or RGB, not CMYK/separation. Convert,
+            # keeping the alpha channel.
+            pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+        if not pix.alpha:
+            pix = pymupdf.Pixmap(pix, 1)
+
+        # Alpha plane. Pixmap() does NOT fold the soft mask into alpha
+        # for /Matte images: it returns un-premultiplied colour at full
+        # opacity, so the watermark would come through opaque. Apply the
+        # mask explicitly. For a plain (non-matte) soft mask these are
+        # the same values Pixmap already used, so this is a no-op rather
+        # than a double application.
+        mask = pymupdf.Pixmap(doc, smask_xref)
+        if mask.n != 1:
+            mask = pymupdf.Pixmap(pymupdf.csGRAY, mask)
+        if (mask.width, mask.height) != (pix.width, pix.height):
+            mask = pymupdf.Pixmap(mask, pix.width, pix.height, None)
+        pix.set_alpha(mask.samples, premultiply=0)
+        return pix.tobytes("png"), "png"
+    except Exception:
+        # A decorative image must never fail an import; fall back to the
+        # flat base stream rather than losing the whole document.
+        return info["image"], info["ext"]
+
+
 def _extract_assets(
     udm: dict[str, Any],
     doc: pymupdf.Document,
@@ -284,11 +338,13 @@ def _extract_assets(
             xref = int(ref.removeprefix("xref:"))
         except ValueError:
             continue
-        info = doc.extract_image(xref)
-        ext = info["ext"]
+        data, ext = _image_bytes_preserving_alpha(doc, xref)
         filename = f"{img['id']}.{ext}"
-        (images_dir / filename).write_bytes(info["image"])
+        (images_dir / filename).write_bytes(data)
         img["data_ref"] = join(prefix, "images", filename)
+        # _ensure_image guessed the format from the base stream; the
+        # alpha composite above may have changed it to PNG.
+        img["format"] = ext
 
     for font in udm["resources"]["fonts"]:
         meta = font.get("_meta") or {}
@@ -1053,7 +1109,10 @@ def _ensure_image(
     image_id = f"img_{len(images):03d}"
     images[xref] = {
         "id": image_id,
-        "format": info["ext"],
+        # A soft-masked image gets re-encoded as RGBA PNG when its bytes
+        # are written out (see _image_bytes_preserving_alpha), which
+        # _extract_assets confirms on disk.
+        "format": "png" if info.get("smask") else info["ext"],
         "width": info["width"],
         "height": info["height"],
         "data_ref": f"xref:{xref}",

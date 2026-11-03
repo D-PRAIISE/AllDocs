@@ -105,7 +105,7 @@ def try_patch_export(
 
         # Image swaps are orthogonal to text edits — a UDM image resource
         # whose data_ref became a data: URL means the user replaced it.
-        image_swaps = _diff_image_resources(udm)
+        image_swaps = _diff_image_resources(udm, work)
         # Net-new content the user added in the editor.
         added_runs = _diff_added_runs(udm)
         added_images = _diff_added_images(udm)
@@ -246,32 +246,118 @@ def _udm_has_ocr_runs(udm: dict[str, Any]) -> bool:
     return False
 
 
-def _diff_image_resources(udm: dict[str, Any]) -> list[tuple[int, bytes]]:
-    """Find image resources the user replaced in the editor.
+def _image_layer_opacities(udm: dict[str, Any]) -> dict[str, float]:
+    """Map ``image_id`` -> the opacity its placements are drawn at.
 
-    A replaced image has a ``data:`` URL as its ``data_ref`` (the editor
-    reads the picked file as a data URL). Its ``_meta.xref`` is the
-    source PDF image XObject to overwrite. Returns (xref, image_bytes).
+    Where one resource is placed several times at different opacities we
+    take the lowest, because the faint placement is the one that would be
+    ruined by baking in a higher value.
+    """
+    out: dict[str, float] = {}
+    content = udm.get("content") or {}
+    for page in content.get("pages") or []:
+        for layer in page.get("layers") or []:
+            if layer.get("type") != "image":
+                continue
+            image_id = layer.get("image_id")
+            if not image_id:
+                continue
+            try:
+                opacity = float(layer.get("opacity", 1.0))
+            except (TypeError, ValueError):
+                opacity = 1.0
+            opacity = max(0.0, min(1.0, opacity))
+            out[image_id] = min(out.get(image_id, 1.0), opacity)
+    return out
+
+
+def _bake_opacity(raw: bytes, opacity: float) -> bytes:
+    """Return ``raw`` with ``opacity`` multiplied into its alpha channel.
+
+    ``insert_image``/``replace_image`` have no opacity argument, but they
+    DO honour an alpha channel: handed RGBA, replace_image writes a real
+    /SMask. So the way to make a replacement watermark faint is to bake
+    the fade into the pixels. Fully opaque placements are returned
+    untouched, so an ordinary photo swap keeps its original (far smaller)
+    JPEG bytes instead of becoming a PNG.
+    """
+    if opacity >= 0.999:
+        return raw
+    pix = pymupdf.Pixmap(raw)
+    if pix.colorspace is not None and pix.colorspace.n not in (1, 3):
+        pix = pymupdf.Pixmap(pymupdf.csRGB, pix)
+    if not pix.alpha:
+        pix = pymupdf.Pixmap(pix, 1)
+    n = pix.n
+    samples = pix.samples
+    # Scale the existing alpha rather than overwrite it, so an image that
+    # already has transparency (a cut-out signature, say) keeps its shape.
+    faded = bytes(
+        int(samples[i] * opacity) for i in range(n - 1, len(samples), n)
+    )
+    pix.set_alpha(faded, premultiply=0)
+    return pix.tobytes("png")
+
+
+def _diff_image_resources(
+    udm: dict[str, Any], doc: pymupdf.Document | None = None
+) -> list[tuple[int, bytes]]:
+    """Find image resources the user changed in the editor.
+
+    Two kinds of change land here:
+
+    * **Replaced** — ``data_ref`` became a ``data:`` URL (the editor reads
+      the picked file as one). Its ``_meta.xref`` is the source PDF image
+      XObject to overwrite.
+    * **Re-faded** — the bytes are untouched but the layer's ``opacity``
+      moved, which has no ``data:`` URL to notice. Needs ``doc`` to read
+      the source pixels back out.
+
+    Either way the layer's opacity is baked into the returned bytes.
+    Idempotent: the patch path always starts from the unmodified source
+    PDF, so the fade is applied to original pixels every export rather
+    than compounding.
     """
     import base64
 
+    opacities = _image_layer_opacities(udm)
     swaps: list[tuple[int, bytes]] = []
     for img in (udm.get("resources") or {}).get("images", []) or []:
-        data_ref = str(img.get("data_ref") or "")
-        if not data_ref.startswith("data:"):
-            continue
         xref = (img.get("_meta") or {}).get("xref")
         if not xref:
             continue
-        comma = data_ref.find(",")
-        if comma < 0:
+        opacity = opacities.get(str(img.get("id")), 1.0)
+        data_ref = str(img.get("data_ref") or "")
+
+        if data_ref.startswith("data:"):
+            comma = data_ref.find(",")
+            if comma < 0:
+                continue
+            try:
+                raw = base64.b64decode(data_ref[comma + 1 :])
+            except Exception:
+                continue
+            if not raw:
+                continue
+        elif opacity < 0.999 and doc is not None:
+            # Opacity-only change: re-encode the source image so the fade
+            # survives the export.
+            from .importer import _image_bytes_preserving_alpha
+
+            try:
+                raw, _ext = _image_bytes_preserving_alpha(doc, int(xref))
+            except Exception:
+                continue
+        else:
             continue
+
         try:
-            raw = base64.b64decode(data_ref[comma + 1 :])
+            raw = _bake_opacity(raw, opacity)
         except Exception:
-            continue
-        if raw:
-            swaps.append((int(xref), raw))
+            # Un-decodable image: ship the bytes as-is rather than
+            # dropping the user's edit on the floor.
+            pass
+        swaps.append((int(xref), raw))
     return swaps
 
 

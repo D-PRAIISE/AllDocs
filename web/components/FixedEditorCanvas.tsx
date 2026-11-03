@@ -652,6 +652,41 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   }, [compactOffer, doc, onChange]);
 
 
+  // --- Image opacity -----------------------------------------------------
+  // UdmImageLayer already carries `opacity`, and both this canvas and the
+  // exporter honour it — there was simply no way to set it. It matters most
+  // for watermarks: the source watermark is faint because of a soft mask
+  // baked into its pixels, so a replacement image arrives fully opaque and
+  // buries the page until it can be dialled back.
+  const selectedImageOpacityPct = useMemo(() => {
+    if (selected.size !== 1) return null;
+    const [p, l] = [...selected][0].split(":").map(Number);
+    if (p === undefined || l === undefined) return null;
+    const layer = fixed.pages[p]?.layers[l];
+    if (layer?.type !== "image") return null;
+    return Math.round(((layer as UdmImageLayer).opacity ?? 1) * 100);
+  }, [selected, fixed]);
+
+  const setSelectedImageOpacity = useCallback(
+    (pct: number) => {
+      if (selected.size !== 1) return;
+      const [p, l] = [...selected][0].split(":").map(Number);
+      if (p === undefined || l === undefined) return;
+      const next = structuredClone(doc) as Document;
+      const content = next.content as FixedContent;
+      const layer = content.pages[p]?.layers[l];
+      if (!layer || layer.type !== "image") return;
+      const clamped = Math.max(0, Math.min(100, Math.round(pct)));
+      (layer as UdmImageLayer).opacity = clamped / 100;
+      // Mark it edited so the patch exporter re-renders this image rather
+      // than passing the untouched original through.
+      ((layer as unknown as { _meta?: Record<string, unknown> })._meta ??= {}).edited = true;
+      // One history entry per drag of the slider, not one per pixel.
+      onChange(next, `img-opacity-${p}:${l}`);
+    },
+    [doc, onChange, selected]
+  );
+
   const nudgeSelected = useCallback(
     (dxPt: number, dyPt: number) => {
       if (selected.size === 0) return;
@@ -1463,6 +1498,8 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
           return layer?.type === "image";
         })()}
         onExtractToLibrary={extractSelectedToLibrary}
+        imageOpacityPct={selectedImageOpacityPct}
+        onImageOpacityChange={setSelectedImageOpacity}
         libraryCount={library.length}
         libraryOpen={libraryOpen}
         onToggleLibrary={() => setLibraryOpen((v) => !v)}
@@ -3447,6 +3484,8 @@ function EditorHeader({
   onToggleAutoDetected,
   canExtractToLibrary,
   onExtractToLibrary,
+  imageOpacityPct,
+  onImageOpacityChange,
   libraryCount,
   libraryOpen,
   onToggleLibrary,
@@ -3467,6 +3506,9 @@ function EditorHeader({
   onToggleAutoDetected: () => void;
   canExtractToLibrary: boolean;
   onExtractToLibrary: () => void;
+  /** 0–100 for the single selected image, or null when none is selected. */
+  imageOpacityPct: number | null;
+  onImageOpacityChange: (pct: number) => void;
   libraryCount: number;
   libraryOpen: boolean;
   onToggleLibrary: () => void;
@@ -3555,6 +3597,27 @@ function EditorHeader({
         ])}
       </div>
       <div className="flex items-center gap-3">
+        {imageOpacityPct !== null ? (
+          <label
+            className="flex items-center gap-1.5 shrink-0"
+            title="Fade the selected image. Drop it low to turn a logo back into a background watermark."
+          >
+            <span className="label whitespace-nowrap">opacity</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={imageOpacityPct}
+              onChange={(e) => onImageOpacityChange(Number(e.target.value))}
+              className="w-24 accent-accent"
+              aria-label="Image opacity"
+            />
+            <span className="font-mono text-xs text-muted w-9 text-right tabular-nums">
+              {imageOpacityPct}%
+            </span>
+          </label>
+        ) : null}
         {canExtractToLibrary ? (
           <button
             onClick={onExtractToLibrary}

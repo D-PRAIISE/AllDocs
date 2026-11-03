@@ -141,12 +141,22 @@ def attach(
 
 
 def _has_edited_run(udm: dict[str, Any]) -> bool:
-    """True if the client flagged any text run with _meta.edited — a real
-    style/text edit. Style-only edits (colour/opacity) don't change the
-    fingerprint, so this marker is what invalidates passthrough for them."""
+    """True if the client flagged a text run or an image layer with
+    _meta.edited — a real style/content edit.
+
+    Style-only edits don't change the fingerprint, so this marker is what
+    invalidates passthrough for them: run colour/opacity, and image
+    opacity (fading a watermark changes no geometry and swaps no bytes,
+    so without this the fade would be silently passed through and lost).
+    """
     for page in (udm.get("content") or {}).get("pages") or []:
         for layer in page.get("layers", []) or []:
-            if layer.get("type") != "text":
+            kind = layer.get("type")
+            if kind == "image":
+                if (layer.get("_meta") or {}).get("edited"):
+                    return True
+                continue
+            if kind != "text":
                 continue
             for run in layer.get("runs", []) or []:
                 if (run.get("_meta") or {}).get("edited"):
