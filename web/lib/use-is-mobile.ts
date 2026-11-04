@@ -55,13 +55,31 @@ export function useKeyboardInset(): number {
 
 /**
  * Scale that fits a page of the given pixel width (at 96 DPI / scale 1)
- * into the current viewport, leaving room for the page padding and
- * container gutters. Capped at 1 so "fit" never upscales a page that
- * already fits. Returns 1 during SSR.
+ * into the space actually available. Capped at 1 so "fit" never upscales
+ * a page that already fits. Returns 1 during SSR.
+ *
+ * Pass the scroll container when you have one. Guessing the gutters from
+ * `innerWidth` is what made the editor scroll sideways on every phone:
+ * the guess reserved 48px while the real chain is 82px — the page shell's
+ * `px-6` (48) plus the canvas container's `p-4` (32) plus its 1px borders
+ * — so every page rendered 34px wider than the space it had. Measuring
+ * the element can't drift when someone changes a padding class.
  */
-export function fitScaleForWidth(pageWidthPx: number): number {
+export function fitScaleForWidth(
+  pageWidthPx: number,
+  container?: HTMLElement | null
+): number {
   if (typeof window === "undefined" || pageWidthPx <= 0) return 1;
-  const avail = window.innerWidth - 48; // ~page padding + container gutters
-  const s = avail / pageWidthPx;
+  let avail: number;
+  if (container) {
+    // clientWidth excludes borders and scrollbar but still includes the
+    // element's own padding, so take that back off.
+    const cs = window.getComputedStyle(container);
+    const padX = parseFloat(cs.paddingLeft || "0") + parseFloat(cs.paddingRight || "0");
+    avail = container.clientWidth - padX;
+  } else {
+    avail = window.innerWidth - 82;
+  }
+  const s = (avail - 2) / pageWidthPx; // 2px of breathing room
   return Math.max(0.1, Math.min(1, Math.round(s * 100) / 100));
 }

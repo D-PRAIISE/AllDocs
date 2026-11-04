@@ -6,6 +6,8 @@ import type { Block, Document, FlowContent, SheetContent, SlidesContent } from "
 import { track } from "@/lib/telemetry";
 import { useHistory } from "@/lib/use-doc-history";
 import { ExportPasswordModal } from "./ExportPasswordModal";
+import { useIsMobile } from "@/lib/use-is-mobile";
+
 import { FixedEditor } from "./FixedEditor";
 import { FlowEditor } from "./FlowEditor";
 import { ReportProblemModal } from "./ReportProblemModal";
@@ -68,6 +70,13 @@ export function HomeClient() {
   const [doc, setDoc] = useState<Document | null>(null);
   const draft = useHistory<Document>(EMPTY_DOC);
   const [isEditing, setIsEditing] = useState(false);
+  // On a phone the seven-field technical readout is the first thing
+  // between the user and their document, and none of it is actionable —
+  // pages/images answers "is this my file?", the rest (udm version,
+  // producer string, font subset counts) is diagnostics. Lead with the
+  // one-line answer, keep the diagnostics one tap away.
+  const isMobile = useIsMobile();
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
@@ -362,7 +371,27 @@ export function HomeClient() {
             stretch space so the box reads as header / body / footer. */}
         <div className="flex-1 flex items-center px-4 py-5">
           {glance ? (
-            <dl className="w-full grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3">
+            <div className="w-full">
+              {isMobile && (
+                <button
+                  onClick={() => setDetailsOpen((v) => !v)}
+                  className="w-full flex items-baseline gap-3 text-left"
+                  aria-expanded={detailsOpen}
+                >
+                  <span className="font-mono text-xs text-fg">
+                    {glance.n} {glance.unit} · {glance.images} image
+                    {glance.images === 1 ? "" : "s"}
+                  </span>
+                  <span className="ml-auto shrink-0 font-mono text-[0.6rem] uppercase tracking-wider text-subtle">
+                    {detailsOpen ? "hide details" : "details"}
+                  </span>
+                </button>
+              )}
+              <dl
+                className={`w-full grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 ${
+                  isMobile ? (detailsOpen ? "mt-4" : "hidden") : ""
+                }`}
+              >
               <GlanceField label={glance.unit} value={String(glance.n)} />
               <GlanceField label="images" value={String(glance.images)} />
               <GlanceField label="mode" value={glance.mode} accent />
@@ -375,10 +404,11 @@ export function HomeClient() {
               {glance.producer && (
                 <GlanceField label="producer" value={glance.producer} span2 />
               )}
-            </dl>
+              </dl>
+            </div>
           ) : (
             <div className="w-full text-center font-mono text-[0.65rem] uppercase tracking-wider text-subtle">
-              drop a file on the left to begin
+              choose a document to begin
             </div>
           )}
         </div>
@@ -386,8 +416,11 @@ export function HomeClient() {
         {/* Actions pinned to the bottom (border-t = footer divider). */}
         <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-border">
           {canEdit && !isEditing && (
-            <button onClick={handleEnterEdit} className="btn-ghost">
-              edit
+            <button
+              onClick={handleEnterEdit}
+              className="btn-primary w-full sm:w-auto"
+            >
+              edit this document
             </button>
           )}
 
@@ -441,7 +474,7 @@ export function HomeClient() {
                   <button
                     onClick={handleDownloadPdf}
                     disabled={isDownloading}
-                    className="btn-primary"
+                    className="btn-ghost"
                   >
                     {isDownloading ? "exporting…" : "↓ pdf"}
                   </button>

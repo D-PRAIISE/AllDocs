@@ -59,6 +59,13 @@ body {
   color: var(--color-fg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Belt and braces, not a cure: one child that overruns its container
+     would otherwise slide the whole page — header, toolbar and all —
+     sideways on a phone. Anything that genuinely needs to scroll
+     horizontally (the canvas, the tool row, wide tables) owns its own
+     overflow-x on an inner element, so clipping here costs nothing.
+     Fix the overrun too; this only stops it taking the page with it. */
+  overflow-x: clip;
 }
 
 body {

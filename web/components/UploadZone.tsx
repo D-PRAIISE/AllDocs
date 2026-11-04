@@ -268,7 +268,10 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       ) : (
         <div className="space-y-3">
           <div className="font-mono text-xs uppercase tracking-wider text-muted">
-            drop a file
+            {/* You can't drag a file on a phone, so don't open with an
+                instruction the device can't follow. */}
+            <span className="sm:hidden">open a document</span>
+            <span className="hidden sm:inline">drop a file</span>
           </div>
           <div className="font-sans text-base sm:text-lg text-fg">
             {/* Full technical list on desktop; a grouped one-liner on
@@ -279,8 +282,10 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
               PDF · DOCX · XLSX · PPTX · Markdown · HTML · EPUB · images
             </span>
           </div>
-          <div className="font-mono text-[0.65rem] text-subtle">or</div>
-          <label className="btn-primary inline-flex cursor-pointer">
+          <div className="hidden sm:block font-mono text-[0.65rem] text-subtle">
+            or
+          </div>
+          <label className="btn-primary inline-flex cursor-pointer justify-center w-full sm:w-auto h-11 sm:h-auto items-center">
             choose file
             <input type="file" accept={ACCEPT} className="hidden" onChange={onChange} />
           </label>

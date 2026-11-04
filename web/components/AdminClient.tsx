@@ -167,7 +167,7 @@ function Funnel({ funnel }: { funnel: AdminStats["funnel"] }) {
   return (
     <section className="space-y-3">
       <div className="label">funnel · all time</div>
-      <div className="grid grid-cols-3 gap-px bg-border border border-border">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-px bg-border border border-border">
         {steps.map((s) => (
           <div key={s.label} className="bg-surface p-4 text-center">
             <div className="font-sans text-3xl font-bold tabular-nums text-fg">

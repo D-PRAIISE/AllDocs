@@ -352,17 +352,35 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   // "fit" button everywhere) so phone users don't get a page ~2x wider
   // than the viewport.
   const firstPageWidthPx = lengthToPx(fixed.pages[0]?.width ?? { value: 0, unit: "px" });
+  // Two-finger pinch zooms the document; one finger still scrolls. The
+  // same element is the scroll container, so it's also what "fit" has to
+  // measure against — see fitScaleForWidth.
+  const pinchRef = useRef<HTMLDivElement>(null);
   const fitToWidth = useCallback(() => {
-    if (firstPageWidthPx > 0) setScale(fitScaleForWidth(firstPageWidthPx));
+    if (firstPageWidthPx > 0)
+      setScale(fitScaleForWidth(firstPageWidthPx, pinchRef.current));
   }, [firstPageWidthPx]);
   const didFit = useRef(false);
   useEffect(() => {
     if (didFit.current || !isMobile || firstPageWidthPx <= 0) return;
-    setScale(fitScaleForWidth(firstPageWidthPx));
+    setScale(fitScaleForWidth(firstPageWidthPx, pinchRef.current));
     didFit.current = true;
   }, [isMobile, firstPageWidthPx]);
-  // Two-finger pinch zooms the document; one finger still scrolls.
-  const pinchRef = useRef<HTMLDivElement>(null);
+  // Re-fit on rotate/resize while the page is still fitted, so turning a
+  // phone sideways doesn't leave the document overflowing.
+  useEffect(() => {
+    if (!isMobile) return;
+    const onResize = () => {
+      if (firstPageWidthPx > 0)
+        setScale(fitScaleForWidth(firstPageWidthPx, pinchRef.current));
+    };
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, [isMobile, firstPageWidthPx]);
   usePinchZoom(pinchRef, scale, setScale);
   // First-run coaching banner. Starts hidden to avoid an SSR/hydration
   // mismatch, then shows on mount unless the user dismissed it before
@@ -1888,11 +1906,40 @@ function PageOpsPanel({ doc, onChange }: { doc: Document; onChange: (d: Document
   const selPage = pages[sel]!;
   const inserted = (selPage._meta?.source_page ?? null) === null;
 
-  const act =
-    "font-mono text-xs px-2 py-1 border border-border text-muted hover:text-fg hover:border-fg disabled:opacity-25 disabled:hover:text-muted disabled:hover:border-border";
+  // Reordering pages is a deliberate, occasional job — not something a
+  // phone user wants six small buttons of in their way on every visit.
+  // Collapse it behind its own control and give the targets real size
+  // once it's open.
+  const isMobile = useIsMobile();
+  const [opsOpen, setOpsOpen] = useState(false);
+
+  const act = `font-mono text-xs border border-border text-muted hover:text-fg hover:border-fg disabled:opacity-25 disabled:hover:text-muted disabled:hover:border-border ${
+    isMobile ? "px-3 h-11 inline-flex items-center" : "px-2 py-1"
+  }`;
+
+  if (isMobile && !opsOpen) {
+    return (
+      <div className="border border-border bg-surface px-3 py-2">
+        <button
+          onClick={() => setOpsOpen(true)}
+          className="font-mono text-xs h-11 inline-flex items-center text-muted"
+        >
+          ▶ pages ({pages.length})
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="border border-border bg-surface px-3 py-2 flex items-center gap-2 flex-wrap">
+      {isMobile && (
+        <button
+          onClick={() => setOpsOpen(false)}
+          className="font-mono text-xs h-11 inline-flex items-center text-muted mr-1"
+        >
+          ▼ pages
+        </button>
+      )}
       <span className="label">page</span>
       <select
         value={sel}
@@ -3571,11 +3618,25 @@ function EditorHeader({
   searchOpen: boolean;
   onToggleSearch: () => void;
 }) {
+  const isMobile = useIsMobile();
+  // The tool palette is collapsed by default on a phone. The default
+  // interaction here needs no tool at all — you tap text and type — so
+  // the screen should open showing the document and one plain
+  // instruction, not thirteen glyph buttons in a strip you can only
+  // read five of at a time.
+  const [toolsOpen, setToolsOpen] = useState(false);
   const modeBtn = (active: boolean) =>
     `font-mono text-xs px-2 py-1 border transition-colors shrink-0 whitespace-nowrap ${
       active
         ? "bg-accent text-accent-fg border-accent"
         : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
+    }`;
+  // Same visual language, sized for a thumb: 44px is the minimum target.
+  const tapBtn = (active: boolean) =>
+    `font-mono text-xs px-3 h-11 inline-flex items-center justify-center border transition-colors whitespace-nowrap ${
+      active
+        ? "bg-accent text-accent-fg border-accent"
+        : "bg-transparent text-muted border-border"
     }`;
   // Tools grouped by intent so the dense row is scannable. Glyphs are
   // unique within the row (the old "add rect" and "text field" both used
@@ -3610,6 +3671,125 @@ function EditorHeader({
       ],
     },
   ];
+  if (isMobile) {
+    const sessionBits = [
+      canExtractToLibrary && (
+        <button key="extract" onClick={onExtractToLibrary} className={tapBtn(false)}>
+          ↥ add to library
+        </button>
+      ),
+      <button key="lib" onClick={onToggleLibrary} className={tapBtn(libraryOpen)}>
+        library ({libraryCount})
+      </button>,
+      autoDetectedCount > 0 && (
+        <button key="af" onClick={onToggleAutoDetected} className={tapBtn(showAutoDetected)}>
+          {showAutoDetected ? "hide" : "show"} {autoDetectedCount} detected field
+          {autoDetectedCount === 1 ? "" : "s"}
+        </button>
+      ),
+      <button key="tips" onClick={onToggleTips} className={tapBtn(tipsOpen)}>
+        ? tips
+      </button>,
+    ].filter(Boolean);
+
+    return (
+      <div className="border border-border bg-surface">
+        <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
+          <ZoomControl scale={scale} onScaleChange={onScaleChange} onFit={onFit} />
+          <div className="ml-auto flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => onLayoutChange("list")}
+              className={tapBtn(layout === "list")}
+              title="Single-column reading view"
+            >
+              ☰
+            </button>
+            <button
+              onClick={() => onLayoutChange("grid")}
+              className={tapBtn(layout === "grid")}
+              title="Thumbnail grid of all pages"
+            >
+              ▦
+            </button>
+          </div>
+        </div>
+
+        {/* The two things a phone user actually reaches for. */}
+        <div className="flex items-stretch gap-2 px-3 py-2">
+          <button
+            onClick={() => setToolsOpen((v) => !v)}
+            className={`flex-1 ${tapBtn(toolsOpen)}`}
+          >
+            {toolsOpen ? "✕ close tools" : "⊞ tools"}
+          </button>
+          <button
+            onClick={onToggleSearch}
+            className={`flex-1 ${tapBtn(searchOpen)}`}
+          >
+            🔍 find
+          </button>
+        </div>
+
+        {/* One plain sentence beats thirteen glyphs. */}
+        {!toolsOpen && (
+          <p className="px-3 pb-2 font-mono text-[0.65rem] text-subtle">
+            {mode === "none" ? "tap any text to edit it" : MODE_HINT[mode]}
+          </p>
+        )}
+
+        {/* Everything visible at once — nothing hidden off the edge. */}
+        {toolsOpen && (
+          <div className="border-t border-border px-3 py-3 space-y-3">
+            {toolGroups.map((g) => (
+              <div key={g.group}>
+                <div className="label mb-1.5">{g.group}</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {g.items.map((t) => (
+                    <button
+                      key={t.m}
+                      onClick={() => {
+                        onToggleMode(t.m);
+                        setToolsOpen(false);
+                      }}
+                      className={tapBtn(mode === t.m)}
+                      title={MODE_HINT[t.m]}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <div>
+              <div className="label mb-1.5">session</div>
+              <div className="flex flex-wrap gap-1.5">{sessionBits}</div>
+            </div>
+          </div>
+        )}
+
+        {/* Contextual: only while an image is selected. */}
+        {imageOpacityPct !== null && (
+          <label className="flex items-center gap-2 px-3 py-2 border-t border-border">
+            <span className="label shrink-0">opacity</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={imageOpacityPct}
+              onChange={(e) => onImageOpacityChange(Number(e.target.value))}
+              className="flex-1 accent-accent"
+              aria-label="Image opacity"
+            />
+            <span className="font-mono text-xs text-muted w-9 text-right tabular-nums">
+              {imageOpacityPct}%
+            </span>
+          </label>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center justify-between gap-3 border border-border bg-surface px-3 py-2 flex-wrap">
       {/* On phones the tool row scrolls horizontally in a single line
