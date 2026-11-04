@@ -22,7 +22,7 @@ import {
   colorRefToCss,
   lengthToPx,
 } from "@/lib/udm";
-import { fitScaleForWidth, useIsMobile } from "@/lib/use-is-mobile";
+import { fitScaleForWidth, useIsMobile, useKeyboardInset } from "@/lib/use-is-mobile";
 import { usePinchZoom } from "@/lib/use-pinch-zoom";
 import { findTextMatches } from "@/lib/text-search";
 import { cssFontStack } from "@/lib/font-css";
@@ -2289,7 +2289,12 @@ function FixedPageEditor({
       !addFieldTextMode &&
       !addFieldCheckboxMode &&
       !addFieldRadioMode ? (
-        <ImageReplaceButtons page={page} scale={scale} onReplaceImage={onReplaceImage} />
+        <ImageReplaceButtons
+          page={page}
+          scale={scale}
+          onReplaceImage={onReplaceImage}
+          isLayerSelected={(i) => selectedKeys.has(pageSelectionKeyOf(i))}
+        />
       ) : null}
       </div>
     </div>
@@ -2649,17 +2654,27 @@ function ImageReplaceButtons({
   page,
   scale,
   onReplaceImage,
+  isLayerSelected,
 }: {
   page: Page;
   scale: number;
   onReplaceImage: (imageId: string) => void;
+  isLayerSelected: (layerIdx: number) => boolean;
 }) {
+  // These badges are positioned by scale but drawn at a fixed size, so on
+  // a phone (pages fitted at ~0.35x) each one ends up bigger than the logo
+  // it labels and blankets the body text — a document with a watermark and
+  // four stamps gets five chips strewn across the page. Desktop keeps
+  // them always-on; on mobile they appear only for a selected image, so
+  // the document reads as a document until you ask to change something.
+  const isMobile = useIsMobile();
   // One button per image resource per page, only for images big enough
   // to be worth replacing (skip bullet glyphs / icons).
   const seen = new Set<string>();
   const buttons: { imageId: string; left: number; top: number }[] = [];
-  for (const layer of page.layers) {
+  for (const [layerIdx, layer] of page.layers.entries()) {
     if (layer.type !== "image") continue;
+    if (isMobile && !isLayerSelected(layerIdx)) continue;
     const wPt = layer.width.unit === "pt" ? layer.width.value : lengthToPx(layer.width) / (96 / 72);
     const hPt = layer.height.unit === "pt" ? layer.height.value : lengthToPx(layer.height) / (96 / 72);
     if (wPt < MIN_REPLACEABLE_PT || hPt < MIN_REPLACEABLE_PT) continue;
@@ -2679,9 +2694,13 @@ function ImageReplaceButtons({
           key={b.imageId}
           onClick={() => onReplaceImage(b.imageId)}
           title={`Replace ${b.imageId}`}
-          className="absolute z-10 font-mono text-[0.6rem] uppercase tracking-wider px-1.5 py-0.5
+          className={`absolute z-10 font-mono uppercase tracking-wider
                      bg-accent text-accent-fg border border-accent
-                     hover:brightness-110 transition"
+                     hover:brightness-110 transition ${
+                       isMobile
+                         ? "text-xs px-3 h-11 flex items-center"
+                         : "text-[0.6rem] px-1.5 py-0.5"
+                     }`}
           style={{ left: b.left, top: b.top }}
         >
           ⟳ image
@@ -3312,6 +3331,41 @@ function TextEditOverlay({
   // Suppress mousedown focus-steal so toolbar clicks don't blur (commit) the span.
   const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
+  // On a phone the bar CANNOT float next to the text. Pages are fitted to
+  // the screen (~0.35x), so a line renders a few pixels tall while the bar
+  // stays ~26px — parking it 30px above the caret blankets several lines
+  // around whatever you're editing, and users reported not being able to
+  // see what they were typing. Dock it to the bottom edge instead, lifted
+  // clear of the on-screen keyboard, which is where every mobile editor
+  // puts it. Desktop keeps the floating behaviour, now clamped on-screen.
+  const isMobile = useIsMobile();
+  const kbInset = useKeyboardInset();
+  // 44px is Apple's minimum touch target; 24px buttons are a coin-flip to hit.
+  const tapSq = isMobile ? "w-11 h-11" : "w-6 h-6";
+  const tapNarrow = isMobile ? "w-9 h-11" : "w-5 h-6";
+  const tapChip = isMobile ? "px-3 h-11" : "px-1.5 h-6";
+  const toolbarCls = isMobile
+    ? "fixed z-30 flex items-center gap-1 border border-border bg-surface px-2 py-1.5 shadow-lg overflow-x-auto max-w-full"
+    : "absolute z-20 flex items-center gap-0.5 border border-border bg-surface px-1 py-0.5 shadow-lg max-w-[calc(100vw-1rem)] overflow-x-auto";
+  const toolbarStyle: CSSProperties = isMobile
+    ? { left: 8, right: 8, bottom: kbInset + 8 }
+    : // Clamp so a run near the right edge can't push the bar off-screen.
+      { left: Math.max(0, geom.x), top: toolbarTop };
+
+  // iOS scrolls a newly focused field to just inside the visual viewport,
+  // which can leave it sitting directly under the docked toolbar. Centre
+  // it instead, once the keyboard animation has settled.
+  useEffect(() => {
+    if (!isMobile) return;
+    const el = spanRef.current;
+    if (!el) return;
+    const t = window.setTimeout(
+      () => el.scrollIntoView({ block: "center", behavior: "smooth" }),
+      250
+    );
+    return () => window.clearTimeout(t);
+  }, [isMobile]);
+
   return (
     <>
       {run.ocr ? (
@@ -3329,15 +3383,12 @@ function TextEditOverlay({
         />
       ) : null}
 
-      <div
-        className="absolute z-20 flex items-center gap-0.5 border border-border bg-surface px-1 py-0.5 shadow-lg"
-        style={{ left: geom.x, top: toolbarTop }}
-      >
+      <div className={toolbarCls} style={toolbarStyle}>
         <button
           onMouseDown={keepFocus}
           onClick={() => setBold((b) => !b)}
           title="Bold"
-          className={`font-mono text-xs font-bold w-6 h-6 border ${
+          className={`font-mono text-xs font-bold ${tapSq} border shrink-0 ${
             bold
               ? "bg-accent text-accent-fg border-accent"
               : "bg-transparent text-muted border-border hover:text-fg"
@@ -3349,7 +3400,7 @@ function TextEditOverlay({
           onMouseDown={keepFocus}
           onClick={() => setItalic((i) => !i)}
           title="Italic"
-          className={`font-mono text-xs italic w-6 h-6 border ml-0.5 ${
+          className={`font-mono text-xs italic ${tapSq} border ml-0.5 shrink-0 ${
             italic
               ? "bg-accent text-accent-fg border-accent"
               : "bg-transparent text-muted border-border hover:text-fg"
@@ -3357,33 +3408,33 @@ function TextEditOverlay({
         >
           I
         </button>
-        <div className="flex items-center border border-border ml-1">
+        <div className="flex items-center border border-border ml-1 shrink-0">
           <button
             onMouseDown={keepFocus}
             onClick={() => setSizePt((s) => Math.max(4, s - 1))}
-            className="font-mono text-xs w-5 h-6 text-muted hover:text-fg"
+            className={`font-mono text-xs ${tapNarrow} text-muted hover:text-fg shrink-0`}
           >
             −
           </button>
-          <span className="font-mono text-[0.65rem] w-7 text-center text-fg tabular-nums">
+          <span className={`font-mono text-[0.65rem] ${isMobile ? "w-10" : "w-7"} text-center text-fg tabular-nums shrink-0`}>
             {sizePt}
           </span>
           <button
             onMouseDown={keepFocus}
             onClick={() => setSizePt((s) => Math.min(300, s + 1))}
-            className="font-mono text-xs w-5 h-6 text-muted hover:text-fg"
+            className={`font-mono text-xs ${tapNarrow} text-muted hover:text-fg shrink-0`}
           >
             +
           </button>
         </div>
-        <div className="flex items-center ml-1">
+        <div className="flex items-center ml-1 shrink-0">
           {(["sans", "serif", "mono"] as FamilyClass[]).map((fc) => (
             <button
               key={fc}
               onMouseDown={keepFocus}
               onClick={() => setFamily(fc)}
               title={FAMILY_NAME[fc]}
-              className={`font-mono text-[0.6rem] uppercase px-1.5 h-6 border ${
+              className={`font-mono text-[0.6rem] uppercase ${tapChip} border shrink-0 ${
                 family === fc
                   ? "bg-accent text-accent-fg border-accent"
                   : "bg-transparent text-muted border-border hover:text-fg"
@@ -3394,7 +3445,7 @@ function TextEditOverlay({
           ))}
         </div>
         {/* Text colour swatches */}
-        <div className="flex items-center gap-0.5 ml-1">
+        <div className="flex items-center gap-0.5 ml-1 shrink-0">
           {TEXT_COLORS.map((c) => (
             <button
               key={c}
@@ -3402,7 +3453,7 @@ function TextEditOverlay({
               onClick={() => setColorHex(c)}
               title={`Colour ${c}`}
               aria-label={`Text colour ${c}`}
-              className={`w-4 h-5 border ${
+              className={`${isMobile ? "w-9 h-11" : "w-4 h-5"} border shrink-0 ${
                 colorHex.toLowerCase() === c
                   ? "border-accent ring-1 ring-accent"
                   : "border-border"
@@ -3412,21 +3463,21 @@ function TextEditOverlay({
           ))}
         </div>
         {/* Opacity stepper */}
-        <div className="flex items-center border border-border ml-1" title="Text opacity">
+        <div className="flex items-center border border-border ml-1 shrink-0" title="Text opacity">
           <button
             onMouseDown={keepFocus}
             onClick={() => setOpacityPct((o) => Math.max(10, o - 10))}
-            className="font-mono text-xs w-5 h-6 text-muted hover:text-fg"
+            className={`font-mono text-xs ${tapNarrow} text-muted hover:text-fg shrink-0`}
           >
             −
           </button>
-          <span className="font-mono text-[0.6rem] w-8 text-center text-fg tabular-nums">
+          <span className={`font-mono text-[0.6rem] ${isMobile ? "w-12" : "w-8"} text-center text-fg tabular-nums shrink-0`}>
             {opacityPct}%
           </span>
           <button
             onMouseDown={keepFocus}
             onClick={() => setOpacityPct((o) => Math.min(100, o + 10))}
-            className="font-mono text-xs w-5 h-6 text-muted hover:text-fg"
+            className={`font-mono text-xs ${tapNarrow} text-muted hover:text-fg shrink-0`}
           >
             +
           </button>

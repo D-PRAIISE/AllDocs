@@ -23,6 +23,37 @@ export function useIsMobile(): boolean {
 }
 
 /**
+ * Height in CSS pixels currently hidden by the on-screen keyboard (0 when
+ * it's closed, or on any browser without visualViewport).
+ *
+ * iOS doesn't shrink the layout viewport when the keyboard opens — it
+ * shrinks the *visual* viewport and scrolls it — so `100vh`, `innerHeight`
+ * and `position: fixed; bottom: 0` all still resolve to a point behind the
+ * keyboard. Reading visualViewport is the only way to find the real usable
+ * bottom edge, which is what anything docked above the keyboard needs.
+ */
+export function useKeyboardInset(): number {
+  const [inset, setInset] = useState(0);
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const read = () => {
+      // Layout height minus what's visible and minus how far the visual
+      // viewport has been scrolled up = what the keyboard is covering.
+      setInset(Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)));
+    };
+    read();
+    vv.addEventListener("resize", read);
+    vv.addEventListener("scroll", read);
+    return () => {
+      vv.removeEventListener("resize", read);
+      vv.removeEventListener("scroll", read);
+    };
+  }, []);
+  return inset;
+}
+
+/**
  * Scale that fits a page of the given pixel width (at 96 DPI / scale 1)
  * into the current viewport, leaving room for the page padding and
  * container gutters. Capped at 1 so "fit" never upscales a page that
