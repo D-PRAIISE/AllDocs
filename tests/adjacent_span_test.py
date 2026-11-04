@@ -33,8 +33,19 @@ def build_adjacent_span_pdf(path: Path) -> None:
     page = doc.new_page(width=612, height=200)
     # First span at x=72, second at x=120 — close enough that
     # PyMuPDF's redact rect on the first will overlap the second.
+    #
+    # The second span is a different colour on purpose. The importer now
+    # merges adjacent same-style fragments into one editable run
+    # (importer._merge_line_spans), and two same-style spans this close
+    # would become a single run — which would quietly stop this test
+    # exercising anything, since there'd be no neighbour left to lose.
+    # Differing styles are exactly the case the merge refuses, so this
+    # keeps the collateral hazard real: two separate runs, bboxes
+    # touching, redacting one must not eat the other.
     page.insert_text((72, 100), "Cook", fontsize=18, fontname="helv")
-    page.insert_text((120, 100), "/ Cashier", fontsize=18, fontname="helv")
+    page.insert_text(
+        (120, 100), "/ Cashier", fontsize=18, fontname="helv", color=(0.1, 0.2, 0.8)
+    )
     doc.save(str(path))
     doc.close()
 
@@ -55,7 +66,10 @@ def main() -> int:
                     continue
                 runs.extend(layer.get("runs", []))
 
-        cook = next((r for r in runs if r.get("text") == "Cook"), None)
+        # strip(): PyMuPDF hands back the leading span as "Cook " — it
+        # synthesises a space for the horizontal gap before the next
+        # text op. Immaterial to what this test checks.
+        cook = next((r for r in runs if r.get("text", "").strip() == "Cook"), None)
         cashier = next((r for r in runs if "Cashier" in r.get("text", "")), None)
         if cook is None or cashier is None:
             print(f"  [FAIL] importer didn't capture both spans: {[r.get('text') for r in runs]!r}")

@@ -718,15 +718,45 @@ def _diff_runs(
                     # UDM has a run that doesn't exist in source — caller can't
                     # patch (new text addition isn't supported in v1).
                     return {}, False
-                used_spans.add(match_idx)
-                src_span = src_spans[match_idx]
+
+                # One UDM run is not always one source span. The importer
+                # merges a line's fragments into a single editable run
+                # (importer._merge_line_spans) and records what it merged
+                # in _meta.spans. Those fragments are consecutive here,
+                # because both sides walk blocks → lines → spans in the
+                # same order. Consume the whole group: comparing against
+                # only the first fragment would mark every merged run as
+                # edited, and redacting only its box would leave the rest
+                # of the old text on the page under the new.
+                parts = (run.get("_meta") or {}).get("spans") or []
+                part_count = max(1, len(parts))
+                group = src_spans[match_idx : match_idx + part_count]
+                if len(group) != part_count:
+                    return {}, False
+                if parts and [p.get("text") for p in parts] != [
+                    s["text"] for s in group
+                ]:
+                    # The trail doesn't line up with the source — don't
+                    # guess at a redaction, fall back to a full render.
+                    return {}, False
+                used_spans.update(range(match_idx, match_idx + part_count))
+                src_text = "".join(s["text"] for s in group)
 
                 # Skip only when the text is unchanged AND the client didn't
                 # flag a style-only edit (colour/size/opacity) via _meta.edited.
-                if src_span["text"] == udm_text and not (run.get("_meta") or {}).get("edited"):
+                if src_text == udm_text and not (run.get("_meta") or {}).get("edited"):
                     continue  # No change to this run
 
-                bbox = src_span["bbox"]
+                if part_count == 1:
+                    bbox = group[0]["bbox"]
+                else:
+                    boxes = [s["bbox"] for s in group]
+                    bbox = (
+                        min(b[0] for b in boxes),
+                        min(b[1] for b in boxes),
+                        max(b[2] for b in boxes),
+                        max(b[3] for b in boxes),
+                    )
                 # NOTE on lesson #8 (character-level redaction): PyMuPDF's
                 # apply_redactions removes a text-show op whole when the
                 # redact rect overlaps any of its glyphs — shrinking the
@@ -742,7 +772,7 @@ def _diff_runs(
                         "rect": pymupdf.Rect(*bbox),
                         "baseline": (float(bbox[0]), float(bbox[3])),
                         "new_text": udm_text,
-                        "old_text": src_span["text"],
+                        "old_text": src_text,
                         "font_id": run.get("font_id"),
                         "font_size": float(run["font_size"]["value"]),
                         "color": run.get("color") or {},

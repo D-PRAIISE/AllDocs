@@ -258,6 +258,93 @@ def _apply_ocr(
         pages[page_idx]["layers"].append({"type": "text", "runs": runs})
 
 
+def _merge_line_spans(
+    spans: list[dict[str, Any]], max_gap_em: float = 0.5
+) -> list[dict[str, Any]]:
+    """Collapse a line's spans into as few editable runs as styling allows.
+
+    PDF producers split a line far more finely than it reads, and the
+    editor makes one clickable run per span — so tapping a word gets you
+    a fragment instead of the sentence.
+
+    Word is the worst offender: it writes every SPACE at a different
+    point size from the words around it (16.0 vs 14.2 in a real
+    certificate). That has no visual effect — a space has no glyph — but
+    it shatters a headline into 14 pieces. Plain same-style merging buys
+    nothing there, because the sizes strictly alternate word/space/word,
+    so a whitespace-only span is treated as compatible with whatever it
+    sits between: its own font and size are unobservable.
+
+    Spans separated by more than ``max_gap_em`` are left alone — that gap
+    is a tab stop or a column, produced by position rather than
+    characters, and merging across it would collapse the alignment on
+    export. Real fragmentation is far tighter: on that certificate every
+    genuine split was under 0.3em.
+
+    A merged span carries ``_parts``: the constituent spans it came from.
+    The patch exporter matches UDM runs to source spans positionally and
+    compares text exactly, so without that trail every merged run would
+    look edited and its redact rect would cover only the first fragment.
+    """
+
+    def is_ws(sp: dict[str, Any]) -> bool:
+        return not (sp.get("text") or "").strip()
+
+    def style_ref(group: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """First span in the group whose styling is actually observable."""
+        return next((s for s in group if not is_ws(s)), None)
+
+    groups: list[list[dict[str, Any]]] = []
+    for sp in spans:
+        if not sp.get("text"):
+            continue
+        if not groups:
+            groups.append([sp])
+            continue
+        cur = groups[-1]
+        ref = style_ref(cur)
+        gap = sp["bbox"][0] - cur[-1]["bbox"][2]
+        size = max(sp.get("size", 0), (ref or sp).get("size", 0), 1.0)
+        adjacent = gap <= max_gap_em * size
+        if ref is None or is_ws(sp):
+            compatible = True
+        else:
+            compatible = (
+                sp.get("font") == ref.get("font")
+                and sp.get("color") == ref.get("color")
+                and abs(sp.get("size", 0) - ref.get("size", 0)) < 0.05
+            )
+        if adjacent and compatible:
+            cur.append(sp)
+        else:
+            groups.append([sp])
+
+    merged: list[dict[str, Any]] = []
+    for group in groups:
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+        ref = style_ref(group) or group[0]
+        boxes = [s["bbox"] for s in group]
+        merged.append(
+            {
+                **ref,
+                "text": "".join(s["text"] for s in group),
+                "bbox": (
+                    min(b[0] for b in boxes),
+                    min(b[1] for b in boxes),
+                    max(b[2] for b in boxes),
+                    max(b[3] for b in boxes),
+                ),
+                "_parts": [
+                    {"text": s["text"], "bbox": [round(v, 2) for v in s["bbox"]]}
+                    for s in group
+                ],
+            }
+        )
+    return merged
+
+
 def _image_bytes_preserving_alpha(
     doc: pymupdf.Document, xref: int
 ) -> tuple[bytes, str]:
@@ -418,22 +505,27 @@ def _page_to_udm(
         if block.get("type") != 0:  # 0 = text, 1 = image
             continue
         for line in block.get("lines", []):
-            for span in line.get("spans", []):
+            for span in _merge_line_spans(line.get("spans", [])):
                 if not span.get("text"):
                     continue
                 # Use the prefixed basefont if known so subset detection works.
                 basefont, font_xref = span_to_font_info.get(span["font"], (span["font"], 0))
                 bbox = span["bbox"]
-                text_runs.append(
-                    {
-                        "text": span["text"],
-                        "font_id": _ensure_font(fonts, basefont, font_xref),
-                        "font_size": _length(span["size"], "pt"),
-                        "color": {"literal": _color_int_to_value(span["color"])},
-                        "x": _length(bbox[0], "pt"),
-                        "y": _length(bbox[3], "pt"),
-                    }
-                )
+                run: dict[str, Any] = {
+                    "text": span["text"],
+                    "font_id": _ensure_font(fonts, basefont, font_xref),
+                    "font_size": _length(span["size"], "pt"),
+                    "color": {"literal": _color_int_to_value(span["color"])},
+                    "x": _length(bbox[0], "pt"),
+                    "y": _length(bbox[3], "pt"),
+                }
+                # Merged runs keep the trail back to the source spans so
+                # the patch exporter can redact all of them, not just the
+                # first — see _merge_line_spans.
+                parts = span.get("_parts")
+                if parts:
+                    run["_meta"] = {"spans": parts}
+                text_runs.append(run)
     if text_runs:
         # NOTE: we used to stamp z_index = first-text-op here, but that
         # mis-orders every later text run when a shape paints between
