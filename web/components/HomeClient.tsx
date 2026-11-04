@@ -335,7 +335,7 @@ export function HomeClient() {
           height; the compacted dropzone centers its content so they
           read as a balanced pair rather than a tall box next to a
           short one. */}
-      <div className="grid lg:grid-cols-2 gap-6 items-stretch">
+      <div className="grid lg:grid-cols-2 gap-3 sm:gap-6 items-stretch">
       <UploadZone onUploaded={handleUploaded} />
 
       <div className="border border-border bg-surface flex flex-col h-full">
@@ -431,7 +431,7 @@ export function HomeClient() {
         </div>
 
         {/* Actions pinned to the bottom (border-t = footer divider). */}
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 px-4 py-3 border-t border-border">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 px-4 py-2 sm:py-3 border-t border-border">
           {canEdit && !isEditing && (
             <button
               onClick={handleEnterEdit}
