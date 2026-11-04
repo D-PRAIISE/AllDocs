@@ -405,6 +405,10 @@ def _render_text_layer(
     tounicode_cmaps: dict[str, bytes] | None = None,
     attached_tounicode: set[tuple[int, str]] | None = None,
 ) -> None:
+    # Local import to match _resolve_fonts; the module isn't imported at
+    # file scope here.
+    from ._fonts import draw_underline
+
     for run in layer.get("runs", []):
         text = run.get("text", "")
         if not text:
@@ -426,6 +430,10 @@ def _render_text_layer(
                 fontfile=value,
                 fontname=f"udm_{font_id}",
             )
+            if run.get("underline"):
+                draw_underline(
+                    page, x, y, text, size, color, fontfile=value
+                )
             # Lesson #13 "real fix": after PyMuPDF embeds the font on
             # this page, attach the saved ToUnicode CMap so re-embedded
             # CIDFonts stay text-extractable. Once per (page, font_id).
@@ -445,6 +453,10 @@ def _render_text_layer(
                 color=color,
                 fontname=value,
             )
+            if run.get("underline"):
+                draw_underline(
+                    page, x, y, text, size, color, fontname=value
+                )
 
 
 def _attach_tounicode_to_font(

@@ -56,6 +56,7 @@ interface EditCommit {
   sizePt: number;
   bold: boolean;
   italic: boolean;
+  underline: boolean;
   family: FamilyClass;
   /** #rrggbb text colour. */
   colorHex: string;
@@ -759,6 +760,10 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
         commit.bold ? 700 : 400,
         commit.italic ? "italic" : "normal",
       );
+      // Underline can't ride on font_id — there's no underlined weight to
+      // point at — so it lives on the run and the exporters draw it.
+      if (commit.underline) run.underline = true;
+      else delete run.underline;
       // Colour + opacity (opacity rides in the colour's alpha channel).
       const { r, g, b } = hexToRgb(commit.colorHex);
       const a = Math.round((Math.max(0, Math.min(100, commit.opacityPct)) / 100) * 255);
@@ -2901,6 +2906,7 @@ function TextRunNode({
           scaleX={runScaleX}
           fontFamily={konvaFontFamily(font)}
           fontStyle={konvaFontStyle(font)}
+          textDecoration={run.underline ? "underline" : ""}
           fill={colorRefToCss(run.color, resources)}
           onClick={onClick}
           onTap={onClick}
@@ -2920,6 +2926,7 @@ function TextRunNode({
       scaleX={runScaleX}
       fontFamily={konvaFontFamily(font)}
       fontStyle={konvaFontStyle(font)}
+      textDecoration={run.underline ? "underline" : ""}
       fill={colorRefToCss(run.color, resources)}
       rotation={run.rotation ?? 0}
       draggable={draggable}
@@ -3309,6 +3316,7 @@ function TextEditOverlay({
   const [italic, setItalic] = useState(
     initialFont?.style === "italic" || initialFont?.style === "oblique"
   );
+  const [underline, setUnderline] = useState(!!run?.underline);
   const [family, setFamily] = useState<FamilyClass>(familyClassOf(initialFont));
   const [sizePt, setSizePt] = useState(run ? Math.round(lengthToPt(run.font_size)) : 12);
   const initialColor = colorToHexAlpha(run?.color);
@@ -3365,7 +3373,16 @@ function TextEditOverlay({
       onCancel();
       return;
     }
-    onCommit(state, { text: valueRef.current, sizePt, bold, italic, family, colorHex, opacityPct });
+    onCommit(state, {
+      text: valueRef.current,
+      sizePt,
+      bold,
+      italic,
+      underline,
+      family,
+      colorHex,
+      opacityPct,
+    });
   };
 
   const spanStyle: CSSProperties = {
@@ -3389,6 +3406,7 @@ function TextEditOverlay({
     border: 0,
     whiteSpace: "pre",
     display: "inline-block",
+    textDecoration: underline ? "underline" : "none",
     caretColor: "var(--color-accent, #fcc46a)",
   };
 
@@ -3412,10 +3430,14 @@ function TextEditOverlay({
   // is four thumb-sized targets rather than a strip that scrolls.
   const [moreOpen, setMoreOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // 44px is Apple's minimum touch target; 24px buttons are a coin-flip to hit.
-  const tapSq = isMobile ? "w-11 h-11" : "w-6 h-6";
-  const tapNarrow = isMobile ? "w-9 h-11" : "w-5 h-6";
-  const tapChip = isMobile ? "px-3 h-11" : "px-1.5 h-6";
+  // 36px: smaller than Apple's 44px minimum, which is the floor for a
+  // lone control, but this is a dense cluster of five where every target
+  // sits inside a predictable grid and nothing destructive is one tap
+  // away. At 44px the bar dominated the screen. Below ~32px it stops
+  // being reliably hittable, so this is as small as it should go.
+  const tapSq = isMobile ? "w-9 h-9" : "w-6 h-6";
+  const tapNarrow = isMobile ? "w-8 h-9" : "w-5 h-6";
+  const tapChip = isMobile ? "px-2.5 h-9" : "px-1.5 h-6";
   const toolbarCls = isMobile
     ? "fixed z-30 flex flex-col items-stretch border border-border bg-surface px-2 py-1.5 shadow-lg max-w-full"
     : "absolute z-20 flex items-center gap-0.5 border border-border bg-surface px-1 py-0.5 shadow-lg max-w-[calc(100vw-1rem)] overflow-x-auto";
@@ -3485,6 +3507,18 @@ function TextEditOverlay({
               </button>
               <button
                 onMouseDown={keepFocus}
+                onClick={() => setUnderline((u) => !u)}
+                aria-label="Underline"
+                className={`font-mono text-sm underline ${tapSq} border shrink-0 ${
+                  underline
+                    ? "bg-accent text-accent-fg border-accent"
+                    : "bg-transparent text-muted border-border"
+                }`}
+              >
+                U
+              </button>
+              <button
+                onMouseDown={keepFocus}
                 onClick={() => {
                   setPaletteOpen((v) => !v);
                   setMoreOpen(false);
@@ -3527,7 +3561,7 @@ function TextEditOverlay({
                       setPaletteOpen(false);
                     }}
                     aria-label={`Text colour ${c}`}
-                    className={`flex-1 h-11 border ${
+                    className={`flex-1 h-9 border ${
                       colorHex.toLowerCase() === c
                         ? "border-accent ring-1 ring-accent"
                         : "border-border"
@@ -3567,7 +3601,7 @@ function TextEditOverlay({
                       key={fc}
                       onMouseDown={keepFocus}
                       onClick={() => setFamily(fc)}
-                      className={`font-mono text-[0.6rem] uppercase flex-1 h-11 border ${
+                      className={`font-mono text-[0.6rem] uppercase flex-1 h-9 border ${
                         family === fc
                           ? "bg-accent text-accent-fg border-accent"
                           : "bg-transparent text-muted border-border"
@@ -3625,6 +3659,18 @@ function TextEditOverlay({
           }`}
         >
           I
+        </button>
+        <button
+          onMouseDown={keepFocus}
+          onClick={() => setUnderline((u) => !u)}
+          title="Underline"
+          className={`font-mono text-xs underline ${tapSq} border ml-0.5 shrink-0 ${
+            underline
+              ? "bg-accent text-accent-fg border-accent"
+              : "bg-transparent text-muted border-border hover:text-fg"
+          }`}
+        >
+          U
         </button>
         <div className="flex items-center border border-border ml-1 shrink-0">
           <button

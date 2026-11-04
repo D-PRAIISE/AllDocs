@@ -226,6 +226,7 @@ function TextRunView({
           color,
           whiteSpace: "pre",
           lineHeight: 1,
+          textDecoration: run.underline ? "underline" : undefined,
           transform,
           transformOrigin: "left baseline",
         }}

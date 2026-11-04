@@ -776,6 +776,10 @@ def _diff_runs(
                         "font_id": run.get("font_id"),
                         "font_size": float(run["font_size"]["value"]),
                         "color": run.get("color") or {},
+                        # Underline isn't on font_id and PDF has no
+                        # underline attribute, so the rule is drawn after
+                        # the text goes in. See _fonts.draw_underline.
+                        "underline": bool(run.get("underline")),
                     }
                 )
 
@@ -1267,6 +1271,8 @@ def _insert_replacement(
     base_dir: Path,
 ) -> None:
     """Insert the replacement text after a redact has cleared the original."""
+    from ._fonts import draw_underline
+
     font_resource = _font_by_id(udm, edit.get("font_id"))
     new_text: str = edit["new_text"]
     fontfile = _pick_font_for_text(font_resource, new_text, base_dir)
@@ -1293,15 +1299,26 @@ def _insert_replacement(
             fill_opacity=alpha,
             fontname=f"udm_patch_{edit.get('font_id') or 'unknown'}",
         )
+        if edit.get("underline"):
+            draw_underline(
+                page, x, y, new_text, size, color,
+                fontfile=str(fontfile), alpha=alpha,
+            )
     else:
+        base14 = _base14_for(font_resource)
         page.insert_text(
             (x, y),
             new_text,
             fontsize=size,
             color=color,
             fill_opacity=alpha,
-            fontname=_base14_for(font_resource),
+            fontname=base14,
         )
+        if edit.get("underline"):
+            draw_underline(
+                page, x, y, new_text, size, color,
+                fontname=base14, alpha=alpha,
+            )
 
 
 def _pick_font_for_text(

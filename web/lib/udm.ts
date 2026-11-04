@@ -158,6 +158,10 @@ export interface PositionedTextRun {
   width?: Length;
   advances?: number[];
   rotation?: number;
+  /** Underline is the one text attribute not carried by font_id: there
+   *  is no underlined weight to point a FontResource at, and PDF has no
+   *  underline text attribute either — exporters stroke the rule. */
+  underline?: boolean;
   ocr?: { confidence: number; engine: string };
   _meta?: { ocr_width?: number; [k: string]: unknown };
 }

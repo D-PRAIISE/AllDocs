@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 BUNDLED_DIR = Path(__file__).resolve().parent / "fonts"
 
@@ -226,3 +227,60 @@ def resolve_fallback(
         if path.exists():
             return path
     return None
+
+
+def draw_underline(
+    page: Any,
+    x: float,
+    baseline_y: float,
+    text: str,
+    fontsize: float,
+    color: Any,
+    *,
+    fontname: str | None = None,
+    fontfile: str | None = None,
+    alpha: float = 1.0,
+) -> None:
+    """Stroke the rule under a run of underlined text.
+
+    PDF has no underline text attribute and PyMuPDF has no underline
+    anywhere on its text insertion — not a parameter, not a render mode —
+    so the only way to export underlined text is to measure the string
+    and draw the line yourself. Both exporters call this straight after
+    their insert_text.
+
+    Offset and thickness use the usual typographic ratios rather than the
+    font's own underlinePosition/underlineThickness: PyMuPDF doesn't
+    expose those, and these are what renderers fall back to anyway.
+    Silently does nothing if the width can't be measured — a missing
+    underline is a far better failure than a line of the wrong length
+    struck through someone's document.
+    """
+    import pymupdf
+
+    try:
+        if fontfile:
+            width = pymupdf.Font(fontfile=str(fontfile)).text_length(
+                text, fontsize=fontsize
+            )
+        else:
+            width = pymupdf.get_text_length(
+                text, fontname=fontname or "helv", fontsize=fontsize
+            )
+    except Exception:
+        return
+    if not width or width <= 0:
+        return
+
+    y = baseline_y + fontsize * 0.11
+    thickness = max(0.4, fontsize * 0.05)
+    try:
+        page.draw_line(
+            (x, y),
+            (x + width, y),
+            color=color,
+            width=thickness,
+            stroke_opacity=alpha,
+        )
+    except Exception:
+        return
