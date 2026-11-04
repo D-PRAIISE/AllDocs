@@ -3406,12 +3406,18 @@ function TextEditOverlay({
   // puts it. Desktop keeps the floating behaviour, now clamped on-screen.
   const isMobile = useIsMobile();
   const kbInset = useKeyboardInset();
+  // Eighteen controls don't fit a phone. Bold, italic and colour are what
+  // people actually reach for; size, font and fade are not. Keep the
+  // first three inline and put the rest behind one overflow, so the bar
+  // is four thumb-sized targets rather than a strip that scrolls.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   // 44px is Apple's minimum touch target; 24px buttons are a coin-flip to hit.
   const tapSq = isMobile ? "w-11 h-11" : "w-6 h-6";
   const tapNarrow = isMobile ? "w-9 h-11" : "w-5 h-6";
   const tapChip = isMobile ? "px-3 h-11" : "px-1.5 h-6";
   const toolbarCls = isMobile
-    ? "fixed z-30 flex items-center gap-1 border border-border bg-surface px-2 py-1.5 shadow-lg overflow-x-auto max-w-full"
+    ? "fixed z-30 flex flex-col items-stretch border border-border bg-surface px-2 py-1.5 shadow-lg max-w-full"
     : "absolute z-20 flex items-center gap-0.5 border border-border bg-surface px-1 py-0.5 shadow-lg max-w-[calc(100vw-1rem)] overflow-x-auto";
   const toolbarStyle: CSSProperties = isMobile
     ? { left: 8, right: 8, bottom: kbInset + 8 }
@@ -3450,6 +3456,152 @@ function TextEditOverlay({
       ) : null}
 
       <div className={toolbarCls} style={toolbarStyle}>
+        {isMobile ? (
+          <>
+            <div className="flex items-center gap-1">
+              <button
+                onMouseDown={keepFocus}
+                onClick={() => setBold((b) => !b)}
+                aria-label="Bold"
+                className={`font-mono text-sm font-bold ${tapSq} border shrink-0 ${
+                  bold
+                    ? "bg-accent text-accent-fg border-accent"
+                    : "bg-transparent text-muted border-border"
+                }`}
+              >
+                B
+              </button>
+              <button
+                onMouseDown={keepFocus}
+                onClick={() => setItalic((i) => !i)}
+                aria-label="Italic"
+                className={`font-mono text-sm italic ${tapSq} border shrink-0 ${
+                  italic
+                    ? "bg-accent text-accent-fg border-accent"
+                    : "bg-transparent text-muted border-border"
+                }`}
+              >
+                I
+              </button>
+              <button
+                onMouseDown={keepFocus}
+                onClick={() => {
+                  setPaletteOpen((v) => !v);
+                  setMoreOpen(false);
+                }}
+                aria-label="Text colour"
+                className={`${tapSq} border shrink-0 flex items-center justify-center ${
+                  paletteOpen ? "border-accent" : "border-border"
+                }`}
+              >
+                <span
+                  className="w-5 h-5 border border-border"
+                  style={{ background: colorHex }}
+                />
+              </button>
+              <button
+                onMouseDown={keepFocus}
+                onClick={() => {
+                  setMoreOpen((v) => !v);
+                  setPaletteOpen(false);
+                }}
+                aria-label="More text options"
+                className={`font-mono text-base ${tapSq} border shrink-0 ${
+                  moreOpen
+                    ? "bg-accent text-accent-fg border-accent"
+                    : "bg-transparent text-muted border-border"
+                }`}
+              >
+                ⋯
+              </button>
+            </div>
+
+            {paletteOpen && (
+              <div className="flex items-center gap-1 pt-1">
+                {TEXT_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onMouseDown={keepFocus}
+                    onClick={() => {
+                      setColorHex(c);
+                      setPaletteOpen(false);
+                    }}
+                    aria-label={`Text colour ${c}`}
+                    className={`flex-1 h-11 border ${
+                      colorHex.toLowerCase() === c
+                        ? "border-accent ring-1 ring-accent"
+                        : "border-border"
+                    }`}
+                    style={{ background: c }}
+                  />
+                ))}
+              </div>
+            )}
+
+            {moreOpen && (
+              <div className="pt-1 space-y-1">
+                <div className="flex items-center gap-1">
+                  <span className="label w-10 shrink-0">size</span>
+                  <button
+                    onMouseDown={keepFocus}
+                    onClick={() => setSizePt((v) => Math.max(4, v - 1))}
+                    className={`font-mono text-xs ${tapNarrow} border border-border text-muted`}
+                  >
+                    −
+                  </button>
+                  <span className="font-mono text-xs text-fg w-10 text-center tabular-nums">
+                    {sizePt}
+                  </span>
+                  <button
+                    onMouseDown={keepFocus}
+                    onClick={() => setSizePt((v) => Math.min(300, v + 1))}
+                    className={`font-mono text-xs ${tapNarrow} border border-border text-muted`}
+                  >
+                    +
+                  </button>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="label w-10 shrink-0">font</span>
+                  {(["sans", "serif", "mono"] as FamilyClass[]).map((fc) => (
+                    <button
+                      key={fc}
+                      onMouseDown={keepFocus}
+                      onClick={() => setFamily(fc)}
+                      className={`font-mono text-[0.6rem] uppercase flex-1 h-11 border ${
+                        family === fc
+                          ? "bg-accent text-accent-fg border-accent"
+                          : "bg-transparent text-muted border-border"
+                      }`}
+                    >
+                      {FAMILY_NAME[fc]}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="label w-10 shrink-0">fade</span>
+                  <button
+                    onMouseDown={keepFocus}
+                    onClick={() => setOpacityPct((o) => Math.max(10, o - 10))}
+                    className={`font-mono text-xs ${tapNarrow} border border-border text-muted`}
+                  >
+                    −
+                  </button>
+                  <span className="font-mono text-xs text-fg w-12 text-center tabular-nums">
+                    {opacityPct}%
+                  </span>
+                  <button
+                    onMouseDown={keepFocus}
+                    onClick={() => setOpacityPct((o) => Math.min(100, o + 10))}
+                    className={`font-mono text-xs ${tapNarrow} border border-border text-muted`}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
         <button
           onMouseDown={keepFocus}
           onClick={() => setBold((b) => !b)}
@@ -3548,6 +3700,8 @@ function TextEditOverlay({
             +
           </button>
         </div>
+          </>
+        )}
       </div>
 
       <span

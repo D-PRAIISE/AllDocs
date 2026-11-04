@@ -446,22 +446,22 @@ export function HomeClient() {
               <button
                 onClick={handleSave}
                 disabled={!isDirty}
-                className="btn-success"
+                className="btn-success flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-3"
               >
                 save
               </button>
-              <button onClick={handleDiscard} className="btn-ghost">
+              <button onClick={handleDiscard} className="btn-ghost flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-3">
                 {isDirty ? "discard" : "done"}
               </button>
               {showHistoryControls && (
                 <>
-                  <span className="w-px h-5 bg-border mx-1" />
+                  <span className="hidden sm:inline-block w-px h-5 bg-border mx-1" />
                   <button
                     onClick={draft.undo}
                     disabled={!draft.canUndo}
                     title="Undo (Ctrl+Z)"
                     aria-label="Undo last change"
-                    className="btn-ghost"
+                    className="btn-ghost flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-3"
                   >
                     ↶ undo
                   </button>
@@ -470,14 +470,14 @@ export function HomeClient() {
                     disabled={!draft.canRedo}
                     title="Redo (Ctrl+Shift+Z)"
                     aria-label="Redo last undo"
-                    className="btn-ghost"
+                    className="btn-ghost flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-3"
                   >
                     ↷ redo
                   </button>
                 </>
               )}
               {isDirty && (
-                <span className="font-mono text-[0.65rem] uppercase tracking-wider text-warn">
+                <span className="basis-full sm:basis-auto font-mono text-[0.65rem] uppercase tracking-wider text-warn">
                   unsaved changes
                 </span>
               )}
