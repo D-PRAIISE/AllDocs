@@ -23,6 +23,7 @@ import {
   lengthToPx,
 } from "@/lib/udm";
 import { fitScaleForWidth, useIsMobile, useKeyboardInset } from "@/lib/use-is-mobile";
+import { fitScaleX, useFontsReady } from "@/lib/fit-text";
 import { usePinchZoom } from "@/lib/use-pinch-zoom";
 import { findTextMatches } from "@/lib/text-search";
 import { cssFontStack } from "@/lib/font-css";
@@ -2825,6 +2826,22 @@ function TextRunNode({
   const y = lengthToPx(run.y) * scale;
   const fontSize = lengthToPx(run.font_size) * scale;
   const top = y - fontSize * BASELINE_TO_TOP;
+
+  // Fit the glyphs to the width this run had on the source page. Konva
+  // draws through the same canvas 2D context we measure with, so the
+  // measurement matches what it will paint. Without this a substitute
+  // font's advance widths decide the layout and runs collide or gap —
+  // see fit-text.ts. Konva scales about the node origin, which for Text
+  // is its top-left, so the run still starts exactly where the PDF put it.
+  useFontsReady();
+  const runScaleX = fitScaleX(
+    run.text,
+    run.width ? lengthToPx(run.width) * scale : 0,
+    // Konva's fontStyle holds weight and slant together ("bold italic"),
+    // which is already valid ahead of the size in a CSS font shorthand.
+    `${konvaFontStyle(font)} ${fontSize}px ${konvaFontFamily(font)}`
+  );
+
   // Added runs are draggable — drag to reposition; click still edits.
   const draggable = !!run._meta?.added;
   const onDragEnd = (e: KonvaEventObject<DragEvent>) => {
@@ -2881,6 +2898,7 @@ function TextRunNode({
           y={top}
           text={run.text}
           fontSize={fontSize}
+          scaleX={runScaleX}
           fontFamily={konvaFontFamily(font)}
           fontStyle={konvaFontStyle(font)}
           fill={colorRefToCss(run.color, resources)}
@@ -2899,6 +2917,7 @@ function TextRunNode({
       y={top}
       text={run.text}
       fontSize={fontSize}
+      scaleX={runScaleX}
       fontFamily={konvaFontFamily(font)}
       fontStyle={konvaFontStyle(font)}
       fill={colorRefToCss(run.color, resources)}

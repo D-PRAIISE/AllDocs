@@ -153,6 +153,9 @@ export interface PositionedTextRun {
   color: ColorRef;
   x: Length;
   y: Length;
+  /** Width this run occupies on the source page. Renderers fit the text
+   *  to it, so a font-metric mismatch can't shift the layout. */
+  width?: Length;
   advances?: number[];
   rotation?: number;
   ocr?: { confidence: number; engine: string };

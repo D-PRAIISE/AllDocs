@@ -13,6 +13,8 @@ import {
 } from "@/lib/udm";
 import { type ReactNode } from "react";
 
+import { fitScaleX, fontShorthand, useFontsReady } from "@/lib/fit-text";
+
 import { type SearchMatch, matchKey } from "@/lib/text-search";
 import { cssFontStack } from "@/lib/font-css";
 
@@ -165,6 +167,24 @@ function TextRunView({
   // Approximate baseline → top by subtracting ~0.8 * fontSize.
   const top = y - fontSize * 0.8;
 
+  // Squeeze/stretch the glyphs into the width this run had on the source
+  // page. Without it a substitute font's advance widths decide the
+  // layout, and runs collide or gap — see fit-text.ts.
+  useFontsReady();
+  const targetPx = run.width ? lengthToPx(run.width) * scale : 0;
+  const scaleX = fitScaleX(
+    run.text,
+    targetPx,
+    fontShorthand(fontStyle, fontWeight, fontSize, fontFamily)
+  );
+  const transform =
+    [
+      run.rotation ? `rotate(${run.rotation}deg)` : "",
+      scaleX !== 1 ? `scaleX(${scaleX})` : "",
+    ]
+      .filter(Boolean)
+      .join(" ") || undefined;
+
   // Mask box covering the original scanned word (for edited OCR runs).
   let mask: ReactNode = null;
   if (editedOcr) {
@@ -206,7 +226,7 @@ function TextRunView({
           color,
           whiteSpace: "pre",
           lineHeight: 1,
-          transform: run.rotation ? `rotate(${run.rotation}deg)` : undefined,
+          transform,
           transformOrigin: "left baseline",
         }}
       >

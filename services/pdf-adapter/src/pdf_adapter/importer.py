@@ -518,6 +518,13 @@ def _page_to_udm(
                     "color": {"literal": _color_int_to_value(span["color"])},
                     "x": _length(bbox[0], "pt"),
                     "y": _length(bbox[3], "pt"),
+                    # How wide this text actually is on the source page.
+                    # The renderer redraws runs with a CSS font whose
+                    # advance widths rarely match the embedded one, so
+                    # without a target width every run lands at the right
+                    # x but the wrong size — neighbours collide and words
+                    # split. See fitScaleX in web/lib/fit-text.ts.
+                    "width": _length(max(0.0, bbox[2] - bbox[0]), "pt"),
                 }
                 # Merged runs keep the trail back to the source spans so
                 # the patch exporter can redact all of them, not just the
