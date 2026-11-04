@@ -339,7 +339,7 @@ export function HomeClient() {
       <UploadZone onUploaded={handleUploaded} />
 
       <div className="border border-border bg-surface flex flex-col h-full">
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 border-b border-border">
+        <div className="hidden sm:flex flex-wrap items-center gap-x-6 gap-y-2 px-4 py-3 border-b border-border">
           <div className="font-mono text-[0.65rem] uppercase tracking-wider text-muted">
             {meta ? "session" : "default"}
           </div>
@@ -359,7 +359,7 @@ export function HomeClient() {
           {meta && (
             <button
               onClick={resetToSynthetic}
-              className="ml-auto font-mono text-[0.65rem] uppercase tracking-wider text-subtle hover:text-muted underline-offset-4 hover:underline"
+              className="basis-full sm:basis-auto text-left sm:ml-auto font-mono text-[0.65rem] uppercase tracking-wider text-subtle hover:text-muted underline-offset-4 hover:underline"
             >
               reset to synthetic
             </button>
@@ -369,7 +369,7 @@ export function HomeClient() {
         {/* Middle: the document's full at-a-glance details (relocated
             from the old standalone summary box). flex-1 fills the
             stretch space so the box reads as header / body / footer. */}
-        <div className="flex-1 flex items-center px-4 py-5">
+        <div className="flex-1 flex items-center px-4 py-2.5 sm:py-5">
           {glance ? (
             <div className="w-full">
               {isMobile && (
@@ -378,9 +378,16 @@ export function HomeClient() {
                   className="w-full flex items-baseline gap-3 text-left"
                   aria-expanded={detailsOpen}
                 >
-                  <span className="font-mono text-xs text-fg">
-                    {glance.n} {glance.unit} · {glance.images} image
-                    {glance.images === 1 ? "" : "s"}
+                  <span className="font-mono text-xs text-fg truncate">
+                    {meta ? meta.filename : "synthetic"}
+                    <span className="text-muted"> · </span>
+                    {glance.n} {glance.unit}
+                    {glance.images > 0 && (
+                      <>
+                        <span className="text-muted"> · </span>
+                        {glance.images} image{glance.images === 1 ? "" : "s"}
+                      </>
+                    )}
                   </span>
                   <span className="ml-auto shrink-0 font-mono text-[0.6rem] uppercase tracking-wider text-subtle">
                     {detailsOpen ? "hide details" : "details"}
@@ -404,6 +411,16 @@ export function HomeClient() {
               {glance.producer && (
                 <GlanceField label="producer" value={glance.producer} span2 />
               )}
+              {meta && (
+                <div className="col-span-2 sm:hidden pt-1">
+                  <button
+                    onClick={resetToSynthetic}
+                    className="font-mono text-[0.6rem] uppercase tracking-wider text-subtle underline-offset-4 underline"
+                  >
+                    reset to synthetic
+                  </button>
+                </div>
+              )}
               </dl>
             </div>
           ) : (
@@ -414,13 +431,13 @@ export function HomeClient() {
         </div>
 
         {/* Actions pinned to the bottom (border-t = footer divider). */}
-        <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-t border-border">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 px-4 py-3 border-t border-border">
           {canEdit && !isEditing && (
             <button
               onClick={handleEnterEdit}
-              className="btn-primary w-full sm:w-auto"
+              className="btn-primary flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-3"
             >
-              edit this document
+              edit
             </button>
           )}
 
@@ -474,14 +491,14 @@ export function HomeClient() {
                   <button
                     onClick={handleDownloadPdf}
                     disabled={isDownloading}
-                    className="btn-ghost"
+                    className="btn-ghost flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-3"
                   >
-                    {isDownloading ? "exporting…" : "↓ pdf"}
+                    {isDownloading ? "…" : "↓ pdf"}
                   </button>
                   <button
                     onClick={() => setExportPasswordOpen(true)}
                     disabled={isDownloading}
-                    className="btn-ghost"
+                    className="btn-ghost flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-3"
                     title="Download as PDF with a password"
                   >
                     🔒 pdf
@@ -489,7 +506,7 @@ export function HomeClient() {
                   <button
                     onClick={handleDownloadDocx}
                     disabled={isDownloading}
-                    className="btn-ghost"
+                    className="btn-ghost flex-1 sm:flex-none whitespace-nowrap px-2 sm:px-3"
                   >
                     ↓ docx
                   </button>

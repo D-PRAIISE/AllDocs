@@ -265,17 +265,22 @@ function ScaleControl({
   onToggleSearch: () => void;
 }) {
   const cls = (active: boolean) =>
-    `font-mono text-xs px-2 py-1 border transition-colors shrink-0 ${
+    `font-mono text-xs px-2 border transition-colors flex-1 h-11 inline-flex items-center justify-center whitespace-nowrap sm:flex-none sm:h-auto sm:py-1 ${
       active
         ? "bg-accent text-accent-fg border-accent"
         : "bg-transparent text-muted border-border hover:border-fg hover:text-fg"
     }`;
-  // On phones the controls scroll in a single row instead of wrapping
-  // into several rows that eat the screen above the document.
+  // Five controls don't fit a phone in one row. They used to scroll
+  // sideways, which hid whatever sat past the edge with nothing to say
+  // so. Wrap instead: zoom takes the first row, the three view controls
+  // share the second at thumb size. The "view" label is dropped there —
+  // list / grid / find already say what they are.
   return (
-    <div className="flex items-center gap-1 mb-3 flex-nowrap overflow-x-auto sm:flex-wrap sm:overflow-visible">
-      <ZoomControl scale={scale} onScaleChange={onScaleChange} onFit={onFit} />
-      <span className="label mx-2 shrink-0">view</span>
+    <div className="flex flex-wrap items-center gap-1.5 mb-3">
+      <div className="basis-full sm:basis-auto">
+        <ZoomControl scale={scale} onScaleChange={onScaleChange} onFit={onFit} />
+      </div>
+      <span className="label mx-2 shrink-0 hidden sm:inline">view</span>
       <button onClick={() => onLayoutChange("list")} className={cls(layout === "list")}>
         ☰ list
       </button>
