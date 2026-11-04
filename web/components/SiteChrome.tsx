@@ -12,12 +12,12 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
     // bg-surface/85 + backdrop-blur keeps the header readable over the
     // page content underneath without an opaque slab.
     <header className="sticky top-0 z-30 border-b border-border bg-surface/85 backdrop-blur-md">
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-4 sm:py-6">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-2.5 sm:py-6">
         <div className="flex items-baseline justify-between gap-4 sm:gap-6 flex-wrap">
           <div className="flex items-baseline gap-3">
             <Link
               href="/"
-              className="font-mono text-xl sm:text-2xl font-bold tracking-tight uppercase hover:text-accent transition-colors"
+              className="font-mono text-lg sm:text-2xl font-bold tracking-tight uppercase hover:text-accent transition-colors"
               aria-label="AllDocs home"
             >
               AllDocs
@@ -35,7 +35,7 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
           </nav>
         </div>
         {!compact && (
-          <div className="mt-4 sm:mt-6 max-w-2xl text-fg/90 leading-relaxed">
+          <div className="mt-3 sm:mt-6 max-w-2xl text-sm sm:text-base text-fg/90 leading-relaxed">
             Universal document editor. Drop a PDF, DOCX, XLSX, PPTX,
             Markdown, HTML, EPUB, or image — view it, edit it, export
             it. No signup. No tracking.
@@ -49,7 +49,7 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
 export function SiteFooter() {
   return (
     <footer className="border-t border-border mt-16">
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-8 flex flex-wrap items-center justify-between gap-4 font-mono text-xs text-muted">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-4 sm:py-8 flex flex-wrap items-center justify-between gap-4 font-mono text-xs text-muted">
         <div>alldocs · universal document editor</div>
         <div className="flex items-center gap-4">
           <PrivacyFooterLink />

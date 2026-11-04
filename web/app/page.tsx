@@ -64,7 +64,7 @@ export default function LandingPage() {
 function Hero() {
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 pt-6 sm:pt-8 pb-16 sm:pb-24 grid lg:grid-cols-2 gap-12 lg:gap-10 items-center">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 pt-4 sm:pt-8 pb-10 sm:pb-24 grid lg:grid-cols-2 gap-12 lg:gap-10 items-center">
         {/* Left: the pitch */}
         <div>
           <div className="font-mono text-[0.65rem] uppercase tracking-wider text-accent mb-6">
@@ -137,7 +137,7 @@ function FormatGrid() {
   ];
   return (
     <section className="border-b border-border" id="formats">
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-10 sm:py-16">
         <div className="label mb-2">supported formats</div>
         <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
           One editor. Every common document format.
@@ -165,7 +165,7 @@ function FormatGrid() {
 function ValueProps() {
   return (
     <section className="border-b border-border" id="how-it-works">
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-10 sm:py-16">
         <div className="label mb-2">how it works</div>
         <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
           Drop. Edit. Download. Done.
@@ -252,7 +252,7 @@ function Comparison() {
   ];
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-10 sm:py-16">
         <div className="label mb-2">how we&apos;re different</div>
         <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
           A serious tool, given away free.
@@ -291,7 +291,7 @@ function Comparison() {
 function PopularTasks() {
   return (
     <section className="border-b border-border">
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-10 sm:py-16">
         <div className="label mb-2">popular tasks</div>
         <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
           Jump straight to what you need.
@@ -318,7 +318,7 @@ function PopularTasks() {
 function FinalCta() {
   return (
     <section>
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-20 text-center">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-12 sm:py-20 text-center">
         <h2 className="font-sans text-3xl sm:text-5xl font-bold tracking-tight max-w-3xl mx-auto leading-tight">
           Edit your first document.
           <br />

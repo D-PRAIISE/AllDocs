@@ -84,7 +84,7 @@ export default async function SeoLandingPage({
 
       {/* Hero */}
       <section className="border-b border-border">
-        <div className="mx-auto max-w-[1600px] px-6 lg:px-10 pt-6 sm:pt-8 pb-14 sm:pb-20">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 pt-4 sm:pt-8 pb-8 sm:pb-20">
           <div className="font-mono text-[0.65rem] uppercase tracking-wider text-accent mb-6">
             {l.eyebrow} · free · no signup
           </div>
@@ -113,7 +113,7 @@ export default async function SeoLandingPage({
 
       {/* Value props */}
       <section className="border-b border-border">
-        <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-10 sm:py-16">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-px bg-border border border-border">
             {l.bullets.map((b) => (
               <div key={b.title} className="bg-surface p-8">
@@ -127,7 +127,7 @@ export default async function SeoLandingPage({
 
       {/* How it works */}
       <section className="border-b border-border">
-        <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-10 sm:py-16">
           <div className="label mb-2">how it works</div>
           <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
             Drop. Edit. Download.
@@ -152,7 +152,7 @@ export default async function SeoLandingPage({
 
       {/* FAQ */}
       <section className="border-b border-border">
-        <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-10 sm:py-16">
           <div className="label mb-2">questions</div>
           <h2 className="font-sans text-2xl sm:text-3xl font-bold tracking-tight mb-10">
             Frequently asked
@@ -170,7 +170,7 @@ export default async function SeoLandingPage({
 
       {/* Related + CTA */}
       <section>
-        <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-16">
+        <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-10 sm:py-16">
           {l.related.length > 0 && (
             <>
               <div className="label mb-3">related</div>

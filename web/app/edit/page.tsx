@@ -21,7 +21,7 @@ export default function EditPage() {
     <main className="min-h-screen">
       <PageViewBeacon page="editor" />
       <SiteHeader compact />
-      <div className="mx-auto max-w-[1600px] px-6 lg:px-10 py-8">
+      <div className="mx-auto max-w-[1600px] px-4 sm:px-6 lg:px-10 py-4 sm:py-8">
         <HomeClient />
       </div>
       <SiteFooter />

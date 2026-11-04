@@ -227,7 +227,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      className={`h-full flex flex-col items-center justify-center border border-dashed p-6 text-center transition-colors ${
+      className={`h-full flex flex-col items-center justify-center border border-dashed p-4 sm:p-6 text-center transition-colors ${
         isDragging
           ? "border-accent bg-accent/5"
           : isUploading
@@ -266,7 +266,7 @@ export function UploadZone({ onUploaded }: UploadZoneProps) {
           onSubmit={(pw) => upload(passwordPrompt.file, pw)}
         />
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2 sm:space-y-3">
           <div className="font-mono text-xs uppercase tracking-wider text-muted">
             {/* You can't drag a file on a phone, so don't open with an
                 instruction the device can't follow. */}
