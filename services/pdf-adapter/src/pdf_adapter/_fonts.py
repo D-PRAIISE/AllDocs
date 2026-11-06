@@ -229,6 +229,66 @@ def resolve_fallback(
     return None
 
 
+def text_width(
+    text: str,
+    fontsize: float,
+    *,
+    fontname: str | None = None,
+    fontfile: str | None = None,
+) -> float:
+    """Width of `text` in points, in whichever font will actually draw it.
+
+    0 when it can't be measured — callers treat that as "don't adjust".
+    """
+    import pymupdf
+
+    if not text:
+        return 0.0
+    try:
+        if fontfile:
+            return float(
+                pymupdf.Font(fontfile=str(fontfile)).text_length(text, fontsize=fontsize)
+            )
+        return float(
+            pymupdf.get_text_length(text, fontname=fontname or "helv", fontsize=fontsize)
+        )
+    except Exception:
+        return 0.0
+
+
+def horizontal_fit(
+    text: str,
+    target_pt: float,
+    fontsize: float,
+    *,
+    fontname: str | None = None,
+    fontfile: str | None = None,
+) -> float:
+    """Horizontal scale that makes `text` occupy `target_pt`, or 1.
+
+    The bundled fallbacks are metric-*compatible*, not metric-identical:
+    Tinos renders "Vaccination" 7.9pt wider than the Times New Roman it
+    stands in for. At a fixed x that difference lands the run on top of
+    its neighbour. The viewer and editor already squeeze each run to the
+    width its source had; this is the same correction for export, which
+    otherwise draws at the substitute's natural width.
+
+    Guarded like the client side: corrections under 2% aren't worth the
+    distortion, and anything beyond 0.5x-2x means the measurement or the
+    recorded width is wrong, where squashing to fit looks worse than the
+    overlap it set out to cure.
+    """
+    if target_pt <= 0:
+        return 1.0
+    natural = text_width(text, fontsize, fontname=fontname, fontfile=fontfile)
+    if natural <= 0:
+        return 1.0
+    scale = target_pt / natural
+    if scale < 0.5 or scale > 2.0:
+        return 1.0
+    return 1.0 if abs(scale - 1.0) < 0.02 else scale
+
+
 def draw_underline(
     page: Any,
     x: float,
@@ -258,18 +318,8 @@ def draw_underline(
     """
     import pymupdf
 
-    try:
-        if fontfile:
-            width = pymupdf.Font(fontfile=str(fontfile)).text_length(
-                text, fontsize=fontsize
-            )
-        else:
-            width = pymupdf.get_text_length(
-                text, fontname=fontname or "helv", fontsize=fontsize
-            )
-    except Exception:
-        return
-    if not width or width <= 0:
+    width = text_width(text, fontsize, fontname=fontname, fontfile=fontfile)
+    if width <= 0:
         return
 
     y = baseline_y + fontsize * 0.11

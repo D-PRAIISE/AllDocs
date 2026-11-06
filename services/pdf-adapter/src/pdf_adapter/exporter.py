@@ -407,7 +407,7 @@ def _render_text_layer(
 ) -> None:
     # Local import to match _resolve_fonts; the module isn't imported at
     # file scope here.
-    from ._fonts import draw_underline
+    from ._fonts import draw_underline, horizontal_fit
 
     for run in layer.get("runs", []):
         text = run.get("text", "")
@@ -421,7 +421,14 @@ def _render_text_layer(
         y = _length_to_pt(run["y"]) - size * DESCENDER_FRACTION
 
         kind, value = font_handles.get(font_id, ("base14", "helv"))
+        # Squeeze the glyphs into the width this run had on the source
+        # page. A bundled fallback is metric-compatible, not identical,
+        # so without this a substituted run drifts wider and lands on
+        # top of its neighbour at the next fixed x.
+        target_pt = _length_to_pt(run["width"]) if run.get("width") else 0.0
         if kind == "file":
+            sx = horizontal_fit(text, target_pt, size, fontfile=value)
+            morph = (pymupdf.Point(x, y), pymupdf.Matrix(sx, 1)) if sx != 1 else None
             page.insert_text(
                 (x, y),
                 text,
@@ -429,6 +436,7 @@ def _render_text_layer(
                 color=color,
                 fontfile=value,
                 fontname=f"udm_{font_id}",
+                morph=morph,
             )
             if run.get("underline"):
                 draw_underline(
@@ -446,12 +454,15 @@ def _render_text_layer(
                         if _attach_tounicode_to_font(page, font_id, cmap_bytes):
                             attached_tounicode.add(key)
         else:
+            sx = horizontal_fit(text, target_pt, size, fontname=value)
+            morph = (pymupdf.Point(x, y), pymupdf.Matrix(sx, 1)) if sx != 1 else None
             page.insert_text(
                 (x, y),
                 text,
                 fontsize=size,
                 color=color,
                 fontname=value,
+                morph=morph,
             )
             if run.get("underline"):
                 draw_underline(
