@@ -32,6 +32,19 @@ function measureCtx(): CanvasRenderingContext2D | null {
 }
 
 /**
+ * Width `text` occupies when drawn in `fontCss`, in CSS pixels. 0 when
+ * there's nothing to measure or no canvas to measure with.
+ */
+export function measureTextPx(text: string, fontCss: string): number {
+  if (!text) return 0;
+  const ctx = measureCtx();
+  if (!ctx) return 0;
+  ctx.font = fontCss;
+  const w = ctx.measureText(text).width;
+  return Number.isFinite(w) && w > 0 ? w : 0;
+}
+
+/**
  * Horizontal scale that makes `text` occupy exactly `targetPx` when drawn
  * in `fontCss` (a CSS shorthand: "italic 700 14px Inter, sans-serif").
  * Returns 1 when there is nothing to fit, nothing to measure with, or the
@@ -39,11 +52,8 @@ function measureCtx(): CanvasRenderingContext2D | null {
  */
 export function fitScaleX(text: string, targetPx: number, fontCss: string): number {
   if (targetPx <= 0 || !text || !text.trim()) return 1;
-  const ctx = measureCtx();
-  if (!ctx) return 1;
-  ctx.font = fontCss;
-  const natural = ctx.measureText(text).width;
-  if (!natural || !Number.isFinite(natural)) return 1;
+  const natural = measureTextPx(text, fontCss);
+  if (!natural) return 1;
 
   const scale = targetPx / natural;
   // A bad measurement should leave the glyphs alone, not smear them

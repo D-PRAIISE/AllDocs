@@ -23,7 +23,7 @@ import {
   lengthToPx,
 } from "@/lib/udm";
 import { fitScaleForWidth, useIsMobile, useKeyboardInset } from "@/lib/use-is-mobile";
-import { fitScaleX, useFontsReady } from "@/lib/fit-text";
+import { fitScaleX, measureTextPx, useFontsReady } from "@/lib/fit-text";
 import { usePinchZoom } from "@/lib/use-pinch-zoom";
 import { findTextMatches } from "@/lib/text-search";
 import { cssFontStack } from "@/lib/font-css";
@@ -520,30 +520,36 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
   // of "FEMALE" and the remaining "MALE" stays exactly where it was.
   // Offer to pull the rest of the line left, the same way a delete
   // offers to pull the page up.
+  // shiftPt is signed: positive closes a gap by pulling the rest of the
+  // line left, negative makes room by pushing it right. Both arise the
+  // same way — edited text needs a different amount of space than the
+  // run it replaced — so they share one offer and one apply.
   const [gapOffer, setGapOffer] = useState<{
     pageIdx: number;
     layerIdx: number;
     baselineYPt: number;
-    fromXPt: number;
-    widthPt: number;
+    afterXPt: number;
+    shiftPt: number;
   } | null>(null);
   // Runs on one visual line share a baseline to within rounding.
   const BASELINE_TOL_PT = 1.5;
 
   const applyCloseGap = useCallback(() => {
     if (!gapOffer) return;
-    const { pageIdx, layerIdx, baselineYPt, fromXPt, widthPt } = gapOffer;
+    const { pageIdx, layerIdx, baselineYPt, afterXPt, shiftPt } = gapOffer;
     const next = structuredClone(doc) as Document;
     const layer = (next.content as FixedContent).pages[pageIdx]?.layers[layerIdx];
-    if (!layer || layer.type !== "text" || widthPt <= 0) {
+    if (!layer || layer.type !== "text" || shiftPt === 0) {
       setGapOffer(null);
       return;
     }
     for (const run of layer.runs) {
       if (Math.abs(lengthToPt(run.y) - baselineYPt) > BASELINE_TOL_PT) continue;
       const x = lengthToPt(run.x);
-      if (x < fromXPt + 0.5) continue; // only what sits to the right
-      run.x = { value: x - widthPt, unit: "pt" };
+      // Everything that starts after the edited run moves; the edited
+      // run itself, and anything before it, stays put.
+      if (x <= afterXPt + 0.5) continue;
+      run.x = { value: x - shiftPt, unit: "pt" };
       // Moved runs no longer sit where their source span does, so the
       // patcher can't match them and falls back to a full re-render.
       // Mark them anyway so a move alone still counts as an edit.
@@ -791,11 +797,22 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       const wasText = run.text;
       run.text = commit.text;
 
-      // Emptying a run leaves a hole: its neighbours keep their own x.
-      // Measure the hole as the distance to the next run along the same
-      // baseline — real geometry, rather than trusting a recorded width
-      // — and offer to close it.
-      if (!commit.text.trim() && wasText.trim()) {
+      if (commit.text !== wasText) {
+        // `width` records how wide the ORIGINAL text was, and the
+        // renderers scale glyphs to fill it. Once the text changes that
+        // figure describes something that no longer exists — keeping it
+        // would stretch a shortened run across its old box. Drop it and
+        // let the new text occupy its natural width.
+        delete run.width;
+
+        // Every run owns a fixed x, so changing a run's length doesn't
+        // move its neighbours. Shorten it and a hole opens; lengthen it
+        // and it runs into the next run — and typing spaces to separate
+        // them only makes the overrun worse, because the space widens
+        // the run that's already too wide. Measure what the new text
+        // needs against the room available and offer to move the rest
+        // of the line either way. Deleting a run outright is just the
+        // case where the new text needs nothing.
         const y = lengthToPt(run.y);
         const x = lengthToPt(run.x);
         let nextX = Infinity;
@@ -805,14 +822,23 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
           const ox = lengthToPt(other.x);
           if (ox > x && ox < nextX) nextX = ox;
         }
-        if (Number.isFinite(nextX) && nextX - x > 0.5) {
-          setGapOffer({
-            pageIdx,
-            layerIdx,
-            baselineYPt: y,
-            fromXPt: x,
-            widthPt: nextX - x,
-          });
+        if (Number.isFinite(nextX)) {
+          const fontCss = `${commit.italic ? "italic" : "normal"} ${
+            commit.bold ? 700 : 400
+          } ${commit.sizePt * (96 / 72)}px ${FAMILY_CSS[commit.family]}`;
+          const neededPt = measureTextPx(commit.text, fontCss) * (72 / 96);
+          const slack = nextX - (x + neededPt);
+          // Under a couple of points either way it's kerning, not a
+          // hole, and not a collision worth reflowing a line over.
+          if (Math.abs(slack) > 2) {
+            setGapOffer({
+              pageIdx,
+              layerIdx,
+              baselineYPt: y,
+              afterXPt: x,
+              shiftPt: slack,
+            });
+          }
         }
       }
       run.font_size = { value: commit.sizePt, unit: "pt" };
@@ -1677,22 +1703,25 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       {gapOffer ? (
         <div className="border border-accent/40 bg-accent/10 px-3 py-2 flex items-center gap-3 flex-wrap">
           <span className="label">
-            page {gapOffer.pageIdx + 1} · {Math.round(gapOffer.widthPt)}pt gap
+            page {gapOffer.pageIdx + 1} · {Math.abs(Math.round(gapOffer.shiftPt))}pt{" "}
+            {gapOffer.shiftPt > 0 ? "gap" : "overlap"}
           </span>
           <span className="font-mono text-xs text-fg">
-            close it by pulling the rest of the line left?
+            {gapOffer.shiftPt > 0
+              ? "close it by pulling the rest of the line left?"
+              : "this text now runs into the next — push the rest of the line right?"}
           </span>
           <button
             onClick={applyCloseGap}
             className="font-mono text-xs px-2 py-1 border border-accent text-accent hover:bg-accent hover:text-accent-fg"
           >
-            ← close gap
+            {gapOffer.shiftPt > 0 ? "← close gap" : "→ make room"}
           </button>
           <button
             onClick={() => setGapOffer(null)}
             className="font-mono text-xs px-2 py-1 border border-border text-muted hover:text-fg hover:border-fg"
           >
-            leave gap
+            leave it
           </button>
         </div>
       ) : null}
