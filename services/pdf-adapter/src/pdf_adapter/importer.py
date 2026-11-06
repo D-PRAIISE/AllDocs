@@ -26,6 +26,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import io
+
 import pymupdf
 
 UDM_VERSION = "0.1.0"
@@ -391,8 +393,31 @@ def _image_bytes_preserving_alpha(
             mask = pymupdf.Pixmap(pymupdf.csGRAY, mask)
         if (mask.width, mask.height) != (pix.width, pix.height):
             mask = pymupdf.Pixmap(mask, pix.width, pix.height, None)
-        pix.set_alpha(mask.samples, premultiply=0)
-        return pix.tobytes("png"), "png"
+
+        # Encode through Pillow, NOT pix.tobytes("png").
+        #
+        # MuPDF holds pixmaps with premultiplied alpha, and tobytes()
+        # writes those samples straight out — so a watermark whose true
+        # colour is (247,247,247) at 13% alpha lands in the PNG as
+        # (32,32,32). Every straight-alpha renderer downstream then
+        # composites 0.129*32 + 0.871*white = 226 and paints a grey slab
+        # over the page instead of 0.129*247 + 0.871*255 = 254, which is
+        # invisible. set_alpha(premultiply=0) doesn't help: it's correct
+        # in memory and lost again at encode. PNG is a straight-alpha
+        # format, so the colour has to be written straight.
+        from PIL import Image
+
+        rgba = Image.frombytes(
+            "RGBA" if pix.n == 4 else "RGB",
+            (pix.width, pix.height),
+            bytes(pix.samples),
+        ).convert("RGB")
+        rgba.putalpha(
+            Image.frombytes("L", (mask.width, mask.height), bytes(mask.samples))
+        )
+        buf = io.BytesIO()
+        rgba.save(buf, format="PNG", optimize=True)
+        return buf.getvalue(), "png"
     except Exception:
         # A decorative image must never fail an import; fall back to the
         # flat base stream rather than losing the whole document.
