@@ -514,6 +514,45 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
     { pageIdx: number; yMinPt: number; yMaxPt: number } | null
   >(null);
 
+  // Horizontal twin of the above. Every run is pinned to the x the PDF
+  // recorded, so emptying one mid-line leaves a hole the rest of the
+  // line can't close on its own — delete the "FE" that Word split out
+  // of "FEMALE" and the remaining "MALE" stays exactly where it was.
+  // Offer to pull the rest of the line left, the same way a delete
+  // offers to pull the page up.
+  const [gapOffer, setGapOffer] = useState<{
+    pageIdx: number;
+    layerIdx: number;
+    baselineYPt: number;
+    fromXPt: number;
+    widthPt: number;
+  } | null>(null);
+  // Runs on one visual line share a baseline to within rounding.
+  const BASELINE_TOL_PT = 1.5;
+
+  const applyCloseGap = useCallback(() => {
+    if (!gapOffer) return;
+    const { pageIdx, layerIdx, baselineYPt, fromXPt, widthPt } = gapOffer;
+    const next = structuredClone(doc) as Document;
+    const layer = (next.content as FixedContent).pages[pageIdx]?.layers[layerIdx];
+    if (!layer || layer.type !== "text" || widthPt <= 0) {
+      setGapOffer(null);
+      return;
+    }
+    for (const run of layer.runs) {
+      if (Math.abs(lengthToPt(run.y) - baselineYPt) > BASELINE_TOL_PT) continue;
+      const x = lengthToPt(run.x);
+      if (x < fromXPt + 0.5) continue; // only what sits to the right
+      run.x = { value: x - widthPt, unit: "pt" };
+      // Moved runs no longer sit where their source span does, so the
+      // patcher can't match them and falls back to a full re-render.
+      // Mark them anyway so a move alone still counts as an edit.
+      run._meta = { ...(run._meta ?? {}), edited: true };
+    }
+    setGapOffer(null);
+    onChange(next, `close-gap-${pageIdx}-${layerIdx}`);
+  }, [gapOffer, doc, onChange]);
+
   // Helper: rough y-extent of a layer in PDF points.
   const layerYExtent = (
     layer: { type: string } & Record<string, unknown>,
@@ -749,7 +788,33 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
       const layer = content.pages[pageIdx]!.layers[layerIdx]!;
       if (layer.type !== "text") return;
       const run = layer.runs[runIdx]!;
+      const wasText = run.text;
       run.text = commit.text;
+
+      // Emptying a run leaves a hole: its neighbours keep their own x.
+      // Measure the hole as the distance to the next run along the same
+      // baseline — real geometry, rather than trusting a recorded width
+      // — and offer to close it.
+      if (!commit.text.trim() && wasText.trim()) {
+        const y = lengthToPt(run.y);
+        const x = lengthToPt(run.x);
+        let nextX = Infinity;
+        for (const other of layer.runs) {
+          if (other === run) continue;
+          if (Math.abs(lengthToPt(other.y) - y) > BASELINE_TOL_PT) continue;
+          const ox = lengthToPt(other.x);
+          if (ox > x && ox < nextX) nextX = ox;
+        }
+        if (Number.isFinite(nextX) && nextX - x > 0.5) {
+          setGapOffer({
+            pageIdx,
+            layerIdx,
+            baselineYPt: y,
+            fromXPt: x,
+            widthPt: nextX - x,
+          });
+        }
+      }
       run.font_size = { value: commit.sizePt, unit: "pt" };
       // Bold + family are expressed by pointing the run at a substituted
       // FontResource of the right weight/family. The exporters resolve
@@ -1603,6 +1668,28 @@ export default function FixedEditorCanvas({ doc, onChange }: FixedEditorCanvasPr
           </button>
           <button
             onClick={() => setCompactOffer(null)}
+            className="font-mono text-xs px-2 py-1 border border-border text-muted hover:text-fg hover:border-fg"
+          >
+            leave gap
+          </button>
+        </div>
+      ) : null}
+      {gapOffer ? (
+        <div className="border border-accent/40 bg-accent/10 px-3 py-2 flex items-center gap-3 flex-wrap">
+          <span className="label">
+            page {gapOffer.pageIdx + 1} · {Math.round(gapOffer.widthPt)}pt gap
+          </span>
+          <span className="font-mono text-xs text-fg">
+            close it by pulling the rest of the line left?
+          </span>
+          <button
+            onClick={applyCloseGap}
+            className="font-mono text-xs px-2 py-1 border border-accent text-accent hover:bg-accent hover:text-accent-fg"
+          >
+            ← close gap
+          </button>
+          <button
+            onClick={() => setGapOffer(null)}
             className="font-mono text-xs px-2 py-1 border border-border text-muted hover:text-fg hover:border-fg"
           >
             leave gap
