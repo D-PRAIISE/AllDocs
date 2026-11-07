@@ -164,6 +164,16 @@ interface FixedEditorCanvasProps {
 // position matches the read-only viewer pixel-for-pixel.
 const BASELINE_TO_TOP = 0.8;
 
+// Clear space between the floating format bar and the line it belongs to.
+// The bar is positioned off its own measured height plus this gap, so the
+// two can't drift apart the way a single hardcoded offset did.
+const TOOLBAR_GAP = 10;
+// Height to assume for the first frame, before the bar has been measured:
+// 24px controls (h-6) + 4px padding (py-0.5) + 2px border. Keeping this in
+// step with the real bar only avoids a one-frame shift; the measurement is
+// what actually places it.
+const TOOLBAR_FALLBACK_H = 30;
+
 // Z-order for paint: lower number = drawn first = at the back.
 // Mirrors pdf-adapter/exporter.py _layer_order_key.
 //
@@ -3527,7 +3537,28 @@ function TextEditOverlay({
   };
 
   // Toolbar sits above the edit box, or below it if there's no room.
-  const toolbarTop = geom.top >= 32 ? geom.top - 30 : geom.top + geom.liveFs + 6;
+  //
+  // The offset has to clear the bar's OWN height, or its bottom edge lands
+  // on the glyph tops and it reads as resting on the line being edited.
+  // That is what a flat `- 30` did: the bar measures 30px, so it sat with
+  // nothing at all between it and the text. Measure the bar rather than
+  // counting up its Tailwind classes, so adding another control can never
+  // silently close the gap again.
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [toolbarH, setToolbarH] = useState(TOOLBAR_FALLBACK_H);
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const measure = () => setToolbarH(el.offsetHeight || TOOLBAR_FALLBACK_H);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const clearance = toolbarH + TOOLBAR_GAP;
+  const toolbarTop =
+    geom.top >= clearance ? geom.top - clearance : geom.top + geom.liveFs + TOOLBAR_GAP;
   // Suppress mousedown focus-steal so toolbar clicks don't blur (commit) the span.
   const keepFocus = (e: React.MouseEvent) => e.preventDefault();
 
@@ -3593,7 +3624,7 @@ function TextEditOverlay({
         />
       ) : null}
 
-      <div className={toolbarCls} style={toolbarStyle}>
+      <div ref={toolbarRef} className={toolbarCls} style={toolbarStyle}>
         {isMobile ? (
           <>
             <div className="flex items-center gap-1">
