@@ -2,10 +2,26 @@ import Link from "next/link";
 
 import { PrivacyFooterLink } from "./PrivacyFooterLink";
 import { ThemeToggle } from "./ThemeToggle";
+import { WhatsNew } from "./WhatsNew";
 
 /** Shared site header. `compact` hides the long tagline so editor-side
  * pages don't carry marketing copy. The brand always links home. */
 export function SiteHeader({ compact = false }: { compact?: boolean }) {
+  return (
+    <>
+      <SiteHeaderBar compact={compact} />
+      {/* Sibling of the bar, not a child: inside a sticky header the
+          release strip would pin to the top and eat a band of every
+          screen until dismissed. Here it scrolls away with the page.
+          Every page renders SiteHeader, so this one mount point covers
+          the landing page, the editor and the format pages alike. */}
+      <WhatsNew />
+    </>
+  );
+}
+
+/** The sticky bar itself. */
+function SiteHeaderBar({ compact }: { compact: boolean }) {
   return (
     // Sticky so navigation + theme + editor link stay reachable when
     // the user scrolls through the landing page or a long document.
