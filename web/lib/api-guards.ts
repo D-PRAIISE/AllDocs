@@ -77,6 +77,33 @@ export function logSuccess(
   });
 }
 
+/** How much of a failed subprocess's output to keep in the audit log. */
+const ERROR_LOG_MAX = 900;
+
+/**
+ * Keep the part of an error that identifies it.
+ *
+ * These are mostly Python tracebacks from the adapters, and a traceback
+ * is written worst-first: the top is runpy boilerplate identical in
+ * every failure, and the exception type and message are on the LAST
+ * line. This used to keep `error.slice(0, 200)`, so eighteen export
+ * failures over seven weeks each recorded the same four lines of
+ * "/usr/lib/python3.10/runpy.py" and discarded every actual cause. The
+ * bug behind them could not be diagnosed from the log at all; it took
+ * reproducing it on the box by hand.
+ *
+ * So keep the head for context and the tail for the cause.
+ */
+function diagnosable(error: string): string {
+  const flat = error.trim();
+  if (flat.length <= ERROR_LOG_MAX) return flat;
+  const head = flat.slice(0, 160);
+  const tail = flat.slice(flat.length - (ERROR_LOG_MAX - head.length - 5));
+  return `${head}
+ […] 
+${tail}`;
+}
+
 export function logRejection(
   route: string,
   ipHash: string,
@@ -88,6 +115,6 @@ export function logRejection(
     route,
     ip_hash: ipHash,
     status,
-    error: error?.slice(0, 200),
+    error: error === undefined ? undefined : diagnosable(error),
   });
 }
