@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import base64
+import binascii
 from pathlib import Path
 from typing import Any
 
@@ -688,9 +690,39 @@ def _render_image_layer(
     if not data_ref or data_ref.startswith(("xref:", "http://", "https://")):
         # No local file we can read.
         return
-    img_path = _resolve_relative(base, data_ref)
-    if not img_path.exists():
-        return
+
+    # An inline image, which is how EVERY scanned upload arrives: the
+    # image importer is run without --assets-dir, so the scan is
+    # embedded as `data:image/jpeg;base64,...` rather than written to a
+    # file. This branch used not to exist, and the data URL fell
+    # through to the file path below — where joining a 250KB URL onto
+    # base_dir produced a path past PATH_MAX, `Path.exists()` raised
+    # OSError [Errno 36] File name too long, and the whole export died.
+    # On Windows the same call merely returns False, so it looked like
+    # a silently missing image and never showed up in local testing;
+    # on the Linux box it was 17 of 18 export failures, every one of
+    # them from a scanned document.
+    stream: bytes | None = None
+    if data_ref.startswith("data:"):
+        header, _, payload = data_ref.partition(",")
+        if ";base64" not in header or not payload:
+            return
+        try:
+            stream = base64.b64decode(payload)
+        except (ValueError, binascii.Error):
+            return
+        if not stream:
+            return
+        img_path = None
+    else:
+        img_path = _resolve_relative(base, data_ref)
+        try:
+            if not img_path.exists():
+                return
+        except OSError:
+            # Any ref we cannot even stat is one we cannot draw. Losing
+            # an image is bad; losing the document is worse.
+            return
 
     rect = pymupdf.Rect(
         _length_to_pt(layer["x"]),
@@ -707,12 +739,20 @@ def _render_image_layer(
     # original faint rendering — only this fallback path is affected.
     # A proper fix needs a different PDF library (pikepdf) or a
     # post-render content-stream rewrite, both out of scope for now.
-    page.insert_image(
-        rect,
-        filename=str(img_path),
-        keep_proportion=False,
-        rotate=int(layer.get("rotation") or 0),
-    )
+    if stream is not None:
+        page.insert_image(
+            rect,
+            stream=stream,
+            keep_proportion=False,
+            rotate=int(layer.get("rotation") or 0),
+        )
+    else:
+        page.insert_image(
+            rect,
+            filename=str(img_path),
+            keep_proportion=False,
+            rotate=int(layer.get("rotation") or 0),
+        )
 
 
 # ---- Metadata ------------------------------------------------------------
