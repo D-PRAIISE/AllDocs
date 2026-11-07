@@ -3,6 +3,7 @@ import Link from "next/link";
 import { PrivacyFooterLink } from "./PrivacyFooterLink";
 import { ThemeToggle } from "./ThemeToggle";
 import { WhatsNew } from "./WhatsNew";
+import { WhatsNewPopup } from "./WhatsNewPopup";
 
 /** Shared site header. `compact` hides the long tagline so editor-side
  * pages don't carry marketing copy. The brand always links home. */
@@ -16,6 +17,9 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
           Every page renders SiteHeader, so this one mount point covers
           the landing page, the editor and the format pages alike. */}
       <WhatsNew />
+      {/* Decides for itself whether this is the page the visitor
+          arrived on; renders nothing on every other page. */}
+      <WhatsNewPopup />
     </>
   );
 }

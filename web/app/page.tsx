@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { EditorPreviewMock } from "@/components/EditorPreviewMock";
+import { EditorPreviewMotion } from "@/components/EditorPreviewMotion";
 import { LiveCounters } from "@/components/LiveCounters";
 import { PageViewBeacon } from "@/components/PageViewBeacon";
 import { SiteFooter, SiteHeader } from "@/components/SiteChrome";
@@ -104,7 +104,7 @@ function Hero() {
         {/* Right: a glimpse of the product. Hidden on the smallest
             screens where it would just push the CTA below the fold. */}
         <div className="hidden sm:block">
-          <EditorPreviewMock />
+          <EditorPreviewMotion />
         </div>
       </div>
     </section>

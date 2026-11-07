@@ -127,6 +127,127 @@ textarea {
   }
 }
 
+/* ----- Landing-hero motion graphic (EditorPreviewMotion) -----
+ * One scene is mounted at a time, so mounting restarts its animations
+ * and no timeline has to be kept in sync with React's clock. Every
+ * keyframe holds its end state well before the scene's slot runs out,
+ * so a viewer sees the *result* of each change rather than a cut
+ * landing mid-move.
+ *
+ * Animated properties are opacity, transform and clip-path only — none
+ * of them trigger layout, so the hero doesn't thrash while a visitor is
+ * reading the copy beside it. */
+
+@keyframes alldocs-scene-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* A watermark that starts as an opaque slab over the text and settles
+ * to the faint stamp it is in the source file. */
+@keyframes alldocs-wm-clear {
+  0%,
+  22% {
+    opacity: 0.92;
+  }
+  72%,
+  100% {
+    opacity: 0.1;
+  }
+}
+
+/* Selection widening from one fragment to the whole line. Clip-path
+ * rather than left/width so it costs no layout. */
+@keyframes alldocs-pick-line {
+  0%,
+  24% {
+    clip-path: inset(0 62% 0 22%);
+  }
+  72%,
+  100% {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+/* Two words jammed together by a substitute font's wider glyphs,
+ * sliding out to the width the source actually had. */
+@keyframes alldocs-unjam {
+  0%,
+  24% {
+    transform: translateX(-42px);
+  }
+  72%,
+  100% {
+    transform: translateX(0);
+  }
+}
+
+@keyframes alldocs-rule-in {
+  0%,
+  32% {
+    transform: scaleX(0);
+  }
+  76%,
+  100% {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes alldocs-chip-on {
+  0%,
+  28% {
+    opacity: 0.35;
+  }
+  48%,
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Deleting a word mid-line, then the rest of the line closing up.
+ *
+ * Front-loaded on purpose. An earlier cut had the word fade at 26-42%
+ * and the line close at 50-82%, which left a quarter-second where the
+ * hole just sat there and held the closed line for only 0.67s before
+ * the scene changed. A viewer saw the hole for twice as long as the
+ * fix and read the scene as "the gap never closed". The result is the
+ * point of the scene, so it now lands at 52% and holds for 1.6s. */
+@keyframes alldocs-word-out {
+  0%,
+  18% {
+    opacity: 1;
+  }
+  30%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes alldocs-gap-close {
+  0%,
+  32% {
+    transform: translateX(0);
+  }
+  52%,
+  100% {
+    transform: translateX(calc(-1 * var(--alldocs-gap, 62px)));
+  }
+}
+
+/* The component already swaps itself for the static mock when this
+ * matches. This is the belt-and-braces half, for anything that slips
+ * through before the effect runs. */
+@media (prefers-reduced-motion: reduce) {
+  [data-alldocs-motion] *,
+  [data-alldocs-motion] {
+    animation: none !important;
+  }
+}
+
 /* ----- Metric-compatible clone fonts -----
  * Open (Apache-2.0) families whose metrics match the most common embedded
  * fonts: Arimo ≈ Arial/Helvetica/Calibri (sans), Tinos ≈ Times/Georgia
