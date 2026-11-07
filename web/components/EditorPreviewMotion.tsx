@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { EditorPreviewMock } from "./EditorPreviewMock";
 
@@ -187,20 +187,53 @@ function SceneUnderline() {
  *  guessed, so the line closes exactly and not approximately. */
 function SceneGap() {
   const deletedRef = useRef<HTMLSpanElement | null>(null);
-  const [gap, setGap] = useState(0);
+  const restRef = useRef<HTMLSpanElement | null>(null);
 
-  useEffect(() => {
-    const el = deletedRef.current;
-    if (el) setGap(el.offsetWidth);
+  // Built in JS with a literal pixel distance, not as a CSS keyframe.
+  //
+  // Every other scene here is a CSS animation, and this one was too: a
+  // keyframe that read the shift from a custom property this component
+  // measured and set. That is the one thing in CSS whose timing is not
+  // dependable across browsers. The property is set after the animation
+  // already exists, and whether a browser then re-resolves the
+  // keyframes is not something you can rely on — Chrome here did, so
+  // the line closed and every measurement I took said it worked, while
+  // on the reporter's desktop AND phone, on localhost and on the live
+  // site, the keyframe kept the 0 it was created with and LEMUEL never
+  // moved at all. The scene played its whole length showing the hole
+  // and nothing else.
+  //
+  // element.animate takes the number by value at the moment it is
+  // called, so there is nothing left to re-resolve and nothing for a
+  // browser to disagree about. Offsets match the old keyframe: hold,
+  // close between 32% and 52%, then hold the closed line for the rest
+  // of the scene, which is the part worth looking at.
+  useLayoutEffect(() => {
+    const deleted = deletedRef.current;
+    const rest = restRef.current;
+    if (!deleted || !rest) return;
+    // offsetWidth, NOT getBoundingClientRect. The scene is drawn inside
+    // a scaled box, and a rect is measured in visual pixels after that
+    // scale while a transform is applied in the element's own layout
+    // pixels before it. Feeding a rect width to translateX therefore
+    // undershoots by exactly the scale factor: at 0.61 in the popup the
+    // line closed 71px of a 117px hole and stopped 28px short.
+    // offsetWidth is layout-space and ignores ancestor transforms, so
+    // it is right at every scale.
+    const dx = deleted.offsetWidth;
+    if (dx <= 0) return;
+    const shift = `translateX(${-dx}px)`;
+    const anim = rest.animate(
+      [
+        { transform: "translateX(0)", offset: 0, easing: "ease-in-out" },
+        { transform: "translateX(0)", offset: 0.32, easing: "ease-in-out" },
+        { transform: shift, offset: 0.52 },
+        { transform: shift, offset: 1 },
+      ],
+      { duration: SCENE_MS, fill: "both" }
+    );
+    return () => anim.cancel();
   }, []);
-
-  const closing: CSSProperties = {
-    // The slide does not begin until 32% of the scene, and the
-    // measurement lands within the first frame or two, so a first paint
-    // carrying the fallback costs nothing visible.
-    ["--alldocs-gap" as string]: `${gap}px`,
-    animation: `alldocs-gap-close ${DUR} both`,
-  };
 
   return (
     <>
@@ -214,7 +247,7 @@ function SceneGap() {
         <span ref={deletedRef} style={{ animation: `alldocs-word-out ${DUR} both` }}>
           {"AGHOGHO "}
         </span>
-        <span style={closing}>LEMUEL</span>
+        <span ref={restRef}>LEMUEL</span>
       </div>
       <Lines className="mt-5" widths={["92%", "78%"]} />
     </>
@@ -231,6 +264,36 @@ const SCENES = [
 
 export function EditorPreviewMotion() {
   const [idx, setIdx] = useState(0);
+
+  // The scenes are composed at exactly PAGE_W x PAGE_H and then scaled
+  // to whatever width the sheet actually gets. They have to be: the
+  // same mock renders in the hero at 470px and inside the popup on a
+  // phone at ~296px, and when the composition was laid out in raw
+  // pixels the narrow case clipped "LEMUEL" off the right edge and
+  // wrapped "Chief Medical Director" onto two lines with its underline
+  // stranded under the second. Scaling keeps one composition that is
+  // correct at every width instead of a layout that happens to fit one.
+  //
+  // offsetWidth is unaffected by transforms, so the gap measurement in
+  // SceneGap stays in design pixels and the translate still lands
+  // exactly - it is simply drawn at the same scale as everything else.
+  const sheetRef = useRef<HTMLDivElement | null>(null);
+  const [docScale, setDocScale] = useState(1);
+  useEffect(() => {
+    const el = sheetRef.current;
+    if (!el) return;
+    const measure = () => {
+      const w = el.clientWidth;
+      // Never enlarge past the design size: the hero is the intended
+      // composition, not a minimum.
+      if (w > 0) setDocScale(Math.min(1, w / PAGE_W));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   // Assume motion is wanted until the query says otherwise, so the
   // common case doesn't flash the still frame first.
   const [reduced, setReduced] = useState(false);
@@ -287,8 +350,9 @@ export function EditorPreviewMotion() {
 
       <div className="p-3 sm:p-4 bg-bg/40">
         <div
+          ref={sheetRef}
           className="mx-auto bg-white relative overflow-hidden"
-          style={{ maxWidth: PAGE_W, height: PAGE_H }}
+          style={{ maxWidth: PAGE_W, height: PAGE_H * docScale }}
         >
           {/* The cross-fade is on the contents, never on the sheet. Fading
               the sheet let the dark backdrop through and flashed the page
@@ -296,8 +360,15 @@ export function EditorPreviewMotion() {
               headline someone is trying to read. */}
           <div
             key={scene.key}
-            className="absolute inset-0"
-            style={{ padding: 28, animation: `alldocs-scene-in 260ms both` }}
+            className="absolute top-0 left-0"
+            style={{
+              width: PAGE_W,
+              height: PAGE_H,
+              padding: 28,
+              transform: `scale(${docScale})`,
+              transformOrigin: "top left",
+              animation: `alldocs-scene-in 260ms both`,
+            }}
           >
             {scene.node}
           </div>
@@ -310,7 +381,10 @@ export function EditorPreviewMotion() {
         <span className="font-mono text-[0.55rem] uppercase tracking-wider text-accent border border-accent px-1 shrink-0">
           new
         </span>
-        <span className="font-mono text-[0.6rem] text-fg/80 truncate">
+        {/* Wraps rather than truncates. At popup width every caption
+            was ellipsised - "deleting text closes the..." - which threw
+            away the one line that says what the animation means. */}
+        <span className="font-mono text-[0.6rem] text-fg/80 leading-tight min-w-0 flex-1">
           {scene.caption}
         </span>
         <span className="ml-auto flex items-center gap-1 shrink-0">

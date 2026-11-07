@@ -210,12 +210,16 @@ textarea {
 
 /* Deleting a word mid-line, then the rest of the line closing up.
  *
- * Front-loaded on purpose. An earlier cut had the word fade at 26-42%
- * and the line close at 50-82%, which left a quarter-second where the
- * hole just sat there and held the closed line for only 0.67s before
- * the scene changed. A viewer saw the hole for twice as long as the
- * fix and read the scene as "the gap never closed". The result is the
- * point of the scene, so it now lands at 52% and holds for 1.6s. */
+ * Front-loaded on purpose. An earlier cut faded the word at 26-42%
+ * and closed the line at 50-82%, leaving a quarter-second where the
+ * hole just sat there and holding the closed line for only 0.67s. The
+ * result is the point of the scene, so the close now lands at 52% and
+ * holds for 1.6s.
+ *
+ * The closing half lives in EditorPreviewMotion, not here: its distance
+ * is measured at runtime, and a keyframe that reads a measured value
+ * from a custom property is resolved at different times by different
+ * browsers. See the comment on SceneGap. */
 @keyframes alldocs-word-out {
   0%,
   18% {
@@ -224,17 +228,6 @@ textarea {
   30%,
   100% {
     opacity: 0;
-  }
-}
-
-@keyframes alldocs-gap-close {
-  0%,
-  32% {
-    transform: translateX(0);
-  }
-  52%,
-  100% {
-    transform: translateX(calc(-1 * var(--alldocs-gap, 62px)));
   }
 }
 
