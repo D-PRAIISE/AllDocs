@@ -79,21 +79,21 @@ function Hero() {
             scanned images — one editor, every format. Drop a file,
             edit it right in your browser, download it back.
           </p>
-          <div className="mt-9 flex flex-wrap items-center gap-3">
+          <div className="mt-9 flex items-center gap-2 sm:gap-3">
             <Link
               href="/edit"
-              className="inline-flex items-center font-mono text-sm uppercase tracking-wider px-6 py-3 bg-accent text-accent-fg border border-accent hover:bg-accent-hover transition-colors"
+              className="inline-flex items-center justify-center whitespace-nowrap font-mono text-xs sm:text-sm uppercase tracking-wider px-4 sm:px-6 py-3 bg-accent text-accent-fg border border-accent hover:bg-accent-hover transition-colors"
             >
               try AllDocs free →
             </Link>
             <Link
               href="#how-it-works"
-              className="inline-flex items-center font-mono text-sm uppercase tracking-wider px-6 py-3 border border-border-strong text-fg hover:border-fg transition-colors"
+              className="inline-flex items-center justify-center whitespace-nowrap font-mono text-xs sm:text-sm uppercase tracking-wider px-4 sm:px-6 py-3 border border-border-strong text-fg hover:border-fg transition-colors"
             >
               how it works
             </Link>
           </div>
-          <div className="mt-10 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-xl">
+          <div className="mt-8 sm:mt-10 grid grid-cols-4 gap-2 sm:gap-4 max-w-xl">
             <Stat number="0" label="signups" />
             <Stat number="8+" label="formats" />
             <Stat number="24h" label="auto-delete" />
@@ -113,11 +113,13 @@ function Hero() {
 
 function Stat({ number, label }: { number: string; label: string }) {
   return (
-    <div className="border-l border-border pl-3">
-      <div className="font-sans text-xl text-fg font-semibold tabular-nums">
+    <div className="border-l border-border pl-2 sm:pl-3">
+      <div className="font-sans text-base sm:text-xl text-fg font-semibold tabular-nums">
         {number}
       </div>
-      <div className="font-mono text-[0.6rem] uppercase tracking-wider text-muted mt-0.5">
+      {/* Four across at 390px leaves ~75px a cell, so the label has to
+          step down or it wraps and the row goes ragged. */}
+      <div className="font-mono text-[0.5rem] sm:text-[0.6rem] uppercase tracking-wider text-muted mt-0.5 whitespace-nowrap">
         {label}
       </div>
     </div>
