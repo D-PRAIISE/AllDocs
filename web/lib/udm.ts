@@ -426,6 +426,27 @@ export interface HybridContent {
 const PT_TO_PX = 4 / 3; // 1 pt = 1/72 in; 1 in = 96 px → 1 pt = 96/72 = 4/3 px
 
 /** Convert a Length to CSS pixels at 96 DPI. */
+/**
+ * Width in CSS pixels that a run occupied on the source page, or 0 when
+ * it cannot be known.
+ *
+ * `width` is what the PDF importer records. An OCR run never has one —
+ * the image importer records the scanned line's extent as
+ * `_meta.ocr_width`, in points. Both renderers and the exporter read
+ * only `width`, so edited OCR text was never fitted to its footprint:
+ * drawn in a substitute font that is wider than the scan, it ran
+ * straight past the mask covering the original pixels and the line
+ * showed the new text with the tail of the old scan still beside it.
+ *
+ * Three places have to agree on this number, which is exactly why it
+ * lives in one function.
+ */
+export function sourceWidthPx(run: PositionedTextRun, scale = 1): number {
+  if (run.width) return lengthToPx(run.width) * scale;
+  const ocr = run._meta?.ocr_width;
+  return typeof ocr === "number" && ocr > 0 ? ocr * (96 / 72) * scale : 0;
+}
+
 export function lengthToPx(len: Length): number {
   switch (len.unit) {
     case "px":

@@ -50,12 +50,24 @@ export function measureTextPx(text: string, fontCss: string): number {
  * Returns 1 when there is nothing to fit, nothing to measure with, or the
  * correction isn't worth making.
  */
-export function fitScaleX(text: string, targetPx: number, fontCss: string): number {
+export function fitScaleX(
+  text: string,
+  targetPx: number,
+  fontCss: string,
+  opts?: { shrinkOnly?: boolean }
+): number {
   if (targetPx <= 0 || !text || !text.trim()) return 1;
   const natural = measureTextPx(text, fontCss);
   if (!natural) return 1;
 
   const scale = targetPx / natural;
+  // For an edited OCR run the width is a CEILING, not a target. It is
+  // the footprint of the scanned line, and a mask of exactly that size
+  // sits underneath hiding the original pixels. Text wider than the
+  // mask spills onto the scan, so it must shrink; text narrower than
+  // the mask is simply fine, and stretching it to fill would be the
+  // same bug in the other direction.
+  if (opts?.shrinkOnly && scale > 1) return 1;
   // A bad measurement should leave the glyphs alone, not smear them
   // across the page. Anything this far out means the font match failed
   // or the recorded width is wrong, and squashing to fit would look far

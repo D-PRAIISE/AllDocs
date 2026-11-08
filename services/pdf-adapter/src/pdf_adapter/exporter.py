@@ -427,9 +427,20 @@ def _render_text_layer(
         # page. A bundled fallback is metric-compatible, not identical,
         # so without this a substituted run drifts wider and lands on
         # top of its neighbour at the next fixed x.
-        target_pt = _length_to_pt(run["width"]) if run.get("width") else 0.0
+        # `width` is what the PDF importer records. An OCR run never has
+        # one; the image importer records the scanned line's extent as
+        # `_meta.ocr_width`, in points. Reading only `width` meant
+        # edited OCR text was exported at the substitute font's natural
+        # width and overran the mask covering the scan.
+        if run.get("width"):
+            target_pt = _length_to_pt(run["width"])
+        else:
+            target_pt = float((run.get("_meta") or {}).get("ocr_width") or 0.0)
+        shrink_only = bool(run.get("ocr"))
         if kind == "file":
-            sx = horizontal_fit(text, target_pt, size, fontfile=value)
+            sx = horizontal_fit(
+                text, target_pt, size, fontfile=value, shrink_only=shrink_only
+            )
             morph = (pymupdf.Point(x, y), pymupdf.Matrix(sx, 1)) if sx != 1 else None
             page.insert_text(
                 (x, y),
@@ -456,7 +467,9 @@ def _render_text_layer(
                         if _attach_tounicode_to_font(page, font_id, cmap_bytes):
                             attached_tounicode.add(key)
         else:
-            sx = horizontal_fit(text, target_pt, size, fontname=value)
+            sx = horizontal_fit(
+                text, target_pt, size, fontname=value, shrink_only=shrink_only
+            )
             morph = (pymupdf.Point(x, y), pymupdf.Matrix(sx, 1)) if sx != 1 else None
             page.insert_text(
                 (x, y),

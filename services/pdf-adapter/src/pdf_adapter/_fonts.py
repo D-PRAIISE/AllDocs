@@ -263,6 +263,7 @@ def horizontal_fit(
     *,
     fontname: str | None = None,
     fontfile: str | None = None,
+    shrink_only: bool = False,
 ) -> float:
     """Horizontal scale that makes `text` occupy `target_pt`, or 1.
 
@@ -284,6 +285,13 @@ def horizontal_fit(
     if natural <= 0:
         return 1.0
     scale = target_pt / natural
+    # For an edited OCR run the target is a CEILING, not a width to
+    # match: it is the footprint of the scanned line, with a mask of
+    # that exact size underneath hiding the original pixels. Wider text
+    # spills onto the scan and must shrink; narrower text is fine, and
+    # stretching it to fill would be the same fault reversed.
+    if shrink_only and scale > 1.0:
+        return 1.0
     if scale < 0.5 or scale > 2.0:
         return 1.0
     return 1.0 if abs(scale - 1.0) < 0.02 else scale

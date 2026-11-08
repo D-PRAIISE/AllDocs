@@ -10,6 +10,7 @@ import {
   type ShapeLayer,
   colorRefToCss,
   lengthToPx,
+  sourceWidthPx,
 } from "@/lib/udm";
 import { type ReactNode } from "react";
 
@@ -171,11 +172,12 @@ function TextRunView({
   // page. Without it a substitute font's advance widths decide the
   // layout, and runs collide or gap — see fit-text.ts.
   useFontsReady();
-  const targetPx = run.width ? lengthToPx(run.width) * scale : 0;
+  const targetPx = sourceWidthPx(run, scale);
   const scaleX = fitScaleX(
     run.text,
     targetPx,
-    fontShorthand(fontStyle, fontWeight, fontSize, fontFamily)
+    fontShorthand(fontStyle, fontWeight, fontSize, fontFamily),
+    { shrinkOnly: !!run.ocr }
   );
   const transform =
     [

@@ -21,6 +21,7 @@ import {
   type TextLayer as UdmTextLayer,
   colorRefToCss,
   lengthToPx,
+  sourceWidthPx,
 } from "@/lib/udm";
 import { fitScaleForWidth, useIsMobile, useKeyboardInset } from "@/lib/use-is-mobile";
 import { fitScaleX, measureTextPx, useFontsReady } from "@/lib/fit-text";
@@ -2967,10 +2968,11 @@ function TextRunNode({
   useFontsReady();
   const runScaleX = fitScaleX(
     run.text,
-    run.width ? lengthToPx(run.width) * scale : 0,
+    sourceWidthPx(run, scale),
     // Konva's fontStyle holds weight and slant together ("bold italic"),
     // which is already valid ahead of the size in a CSS font shorthand.
-    `${konvaFontStyle(font)} ${fontSize}px ${konvaFontFamily(font)}`
+    `${konvaFontStyle(font)} ${fontSize}px ${konvaFontFamily(font)}`,
+    { shrinkOnly: !!run.ocr }
   );
 
   // Added runs are draggable — drag to reposition; click still edits.
