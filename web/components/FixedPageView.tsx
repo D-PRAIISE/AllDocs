@@ -330,17 +330,9 @@ function ImageLayerView({
 }
 
 function ShapeLayerView({ layer, scale }: { layer: ShapeLayer; scale: number }) {
-  // Render solid-fill rectangles only (the importer also captures only rects
-  // in v0.1). Curves, paths, and gradients land in v0.2.
   const geom = layer.geometry as
-    | { kind?: string; x?: never; y?: never; w?: never; h?: never }
+    | { kind?: string; x?: never; y?: never; w?: never; h?: never; d?: string }
     | undefined;
-  if (geom?.kind !== "rect" || !geom.x || !geom.y || !geom.w || !geom.h) return null;
-
-  const x = lengthToPx(geom.x) * scale;
-  const y = lengthToPx(geom.y) * scale;
-  const w = lengthToPx(geom.w) * scale;
-  const h = lengthToPx(geom.h) * scale;
 
   const fill = (layer.fill as { kind?: string; color?: never } | undefined) ?? undefined;
   const stroke =
@@ -351,6 +343,49 @@ function ShapeLayerView({ layer, scale }: { layer: ShapeLayer; scale: number }) 
     stroke?.paint?.color && stroke.width
       ? `${lengthToPx(stroke.width) * scale}px solid ${colorRefToCss(stroke.paint.color)}`
       : undefined;
+
+  // Curved and multi-segment paths. See the note in FixedEditorCanvas's
+  // ShapeNode: these were dropped by both renderers, which on a real
+  // document meant the white panel over a coloured background never
+  // drew and the text sat on raw colour.
+  //
+  // The d-string is in absolute page points. An SVG sized in pt and
+  // scaled by CSS transform keeps the path in the page's own coordinate
+  // system without having to know the page box here.
+  if (geom?.kind === "path" && geom.d) {
+    const s = (96 / 72) * scale;
+    return (
+      <svg
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: 1,
+          height: 1,
+          overflow: "visible",
+          transform: `scale(${s})`,
+          transformOrigin: "0 0",
+          opacity: layer.opacity ?? 1,
+          pointerEvents: "none",
+        }}
+      >
+        <path
+          d={geom.d}
+          fill={bg ?? "none"}
+          stroke={stroke?.paint?.color ? colorRefToCss(stroke.paint.color) : "none"}
+          strokeWidth={stroke?.width ? lengthToPx(stroke.width) : 0}
+        />
+      </svg>
+    );
+  }
+
+  if (geom?.kind !== "rect" || !geom.x || !geom.y || !geom.w || !geom.h) return null;
+
+  const x = lengthToPx(geom.x) * scale;
+  const y = lengthToPx(geom.y) * scale;
+  const w = lengthToPx(geom.w) * scale;
+  const h = lengthToPx(geom.h) * scale;
 
   return (
     <div

@@ -1,7 +1,7 @@
 "use client";
 
 import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Group, Image as KonvaImage, Layer, Line as KonvaLine, Rect as KonvaRect, Stage, Text as KonvaText } from "react-konva";
+import { Group, Image as KonvaImage, Layer, Line as KonvaLine, Path as KonvaPath, Rect as KonvaRect, Stage, Text as KonvaText } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Stage as KonvaStageType } from "konva/lib/Stage";
 import useImage from "use-image";
@@ -3360,14 +3360,8 @@ function ShapeNode({
   onClick?: (additive: boolean) => void;
 }) {
   const geom = layer.geometry as
-    | { kind?: string; x?: never; y?: never; w?: never; h?: never }
+    | { kind?: string; x?: never; y?: never; w?: never; h?: never; d?: string }
     | undefined;
-  if (geom?.kind !== "rect" || !geom.x || !geom.y || !geom.w || !geom.h) return null;
-
-  const x = lengthToPx(geom.x) * scale;
-  const y = lengthToPx(geom.y) * scale;
-  const w = lengthToPx(geom.w) * scale;
-  const h = lengthToPx(geom.h) * scale;
 
   const fill = (layer.fill as { kind?: string; color?: never } | undefined) ?? undefined;
   const stroke =
@@ -3377,6 +3371,44 @@ function ShapeNode({
     fill?.kind === "solid" && fill.color ? colorRefToCss(fill.color, undefined) : undefined;
   const strokeColor = stroke?.paint?.color ? colorRefToCss(stroke.paint.color, undefined) : undefined;
   const strokeWidth = stroke?.width ? lengthToPx(stroke.width) * scale : 0;
+
+  // Curved and multi-segment paths — rounded panels, callouts, rules.
+  //
+  // The importer has emitted these as kind="path" with an SVG d-string
+  // since the lesson-12 work, and the exporter draws them. Both client
+  // renderers still only handled kind="rect" and returned null for
+  // everything else, under a comment claiming the importer captured
+  // only rects. On a real 27-page document that silently dropped 217 of
+  // 279 shapes: every page's white content panel vanished while the
+  // coloured background behind it stayed, so the text rendered onto raw
+  // blue or red and was all but unreadable.
+  //
+  // Konva's Path takes SVG data directly. The d-string is in absolute
+  // page points, so the node sits at the origin and scales as a whole.
+  if (geom?.kind === "path" && geom.d) {
+    const s = (96 / 72) * scale;
+    return (
+      <KonvaPath
+        data={geom.d}
+        x={0}
+        y={0}
+        scaleX={s}
+        scaleY={s}
+        fill={fillColor}
+        stroke={isSelected ? "#5b9bd5" : strokeColor}
+        strokeWidth={strokeWidth ? strokeWidth / s : isSelected ? 1 / s : 0}
+        opacity={layer.opacity ?? 1}
+        listening={false}
+      />
+    );
+  }
+
+  if (geom?.kind !== "rect" || !geom.x || !geom.y || !geom.w || !geom.h) return null;
+
+  const x = lengthToPx(geom.x) * scale;
+  const y = lengthToPx(geom.y) * scale;
+  const w = lengthToPx(geom.w) * scale;
+  const h = lengthToPx(geom.h) * scale;
 
   return (
     <KonvaRect
