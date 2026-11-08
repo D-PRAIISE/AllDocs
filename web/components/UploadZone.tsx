@@ -45,35 +45,70 @@ const ALLOWED_EXTS = [
   ".tiff",
 ];
 
-// Stage copy shown while an import is in flight, walking through the
-// real AllDocs pipeline (adapter spawn → parse → OCR → asset extraction
-// → UDM build → render). At ~4s each these carry the user for the first
-// ~minute; after that we switch to an honest "still working" line +
-// elapsed seconds rather than freezing on a fake "almost there". Imports
-// run as a background job and can legitimately take minutes.
+// Stage copy shown while an import is in flight.
+//
+// These track the real pipeline rather than inventing plausible-sounding
+// steps: the order below is the order importer.py actually works in,
+// and the slow ones are slow because profiling says so — building a
+// text page costs ~0.3s each and re-encoding an image ~0.1s each, which
+// on a 27-page illustrated manual is most of the wait.
+//
+// At STAGE_SECS each these carry the user through a long import; after
+// the list runs out we switch to an honest rotating "still working"
+// line plus elapsed seconds, rather than freezing on a fake
+// "almost there". Imports run as a background job and a big scanned
+// document can legitimately take minutes.
 const IMPORT_STAGES = [
   "uploading your file…",
   "spawning the document adapter…",
   "sniffing the file format…",
+  "checking whether the file is encrypted…",
   "validating the source structure…",
-  "parsing pages and content streams…",
+  "counting pages…",
+  "parsing page content streams…",
+  "building a text page for each page…",
   "detecting scanned vs. native text…",
   "running Tesseract OCR on scanned pages…",
   "recognizing characters and words…",
+  "grouping words into lines…",
   "rebuilding the reading order…",
+  "merging split line fragments…",
   "extracting embedded images…",
+  "preserving soft-mask transparency…",
+  "re-encoding masked images…",
+  "resolving clip paths…",
+  "capturing vector shapes and curves…",
+  "working out what sits on top of what…",
   "extracting and subsetting fonts…",
+  "matching fonts to metric-compatible clones…",
+  "looking for fillable form fields…",
   "normalizing page geometry…",
   "mapping to the Universal Document Model…",
-  "building editable text and layout layers…",
+  "building editable text and layers…",
   "rendering your editable view…",
 ];
-const STAGE_SECS = 4;
+const STAGE_SECS = 3;
+
+// Shown once the stage list is exhausted. Rotating, because a single
+// frozen line reads as a hang — and each one has to stay true however
+// long it ends up being displayed, so none of them promise it is nearly
+// done.
+const LONG_WAIT = [
+  "still working — large or scanned files can take a few minutes",
+  "big documents with many images take the longest",
+  "every page is OCR'd separately, so page count drives the wait",
+  "still going — the job is running, not stuck",
+  "this stays open if you leave the tab; the work is server-side",
+];
+const LONG_WAIT_SECS = 6;
 
 function stageMessage(elapsedSec: number): string {
   const i = Math.floor(elapsedSec / STAGE_SECS);
   if (i < IMPORT_STAGES.length) return IMPORT_STAGES[i];
-  return "still working — large or scanned files can take a few minutes";
+  const over = Math.floor(
+    (elapsedSec - IMPORT_STAGES.length * STAGE_SECS) / LONG_WAIT_SECS
+  );
+  return LONG_WAIT[Math.max(0, over) % LONG_WAIT.length];
 }
 
 export function UploadZone({ onUploaded }: UploadZoneProps) {
