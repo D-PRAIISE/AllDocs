@@ -30,6 +30,8 @@ import io
 
 import pymupdf
 
+from . import _pagecache
+
 UDM_VERSION = "0.1.0"
 
 WEIGHT_NAMES: dict[str, int] = {
@@ -98,6 +100,10 @@ def import_pdf(
 
     Returns a dict ready to be serialized as UDM JSON.
     """
+    # One document per cache lifetime. The test suite imports
+    # several in a single process, and an xref or page number from
+    # the previous one would quietly hand back the wrong bytes.
+    _pagecache.reset()
     from . import _passthrough
 
     path = Path(path)
@@ -365,7 +371,7 @@ def _image_bytes_preserving_alpha(
     original (usually far smaller) bytes — this costs size only where it
     buys correctness.
     """
-    info = doc.extract_image(xref)
+    info = _pagecache.extract_image(doc, xref)
     smask_xref = info.get("smask")
     if not smask_xref:
         return info["image"], info["ext"]
@@ -526,7 +532,7 @@ def _page_to_udm(
     text_runs: list[dict[str, Any]] = []
     # Stamp a per-run z-index too: when text runs are emitted in
     # multiple paint passes, the exporter can sort runs individually.
-    for block in page.get_text("dict").get("blocks", []):
+    for block in _pagecache.text_dict(page).get("blocks", []):
         if block.get("type") != 0:  # 0 = text, 1 = image
             continue
         for line in block.get("lines", []):
@@ -1229,7 +1235,7 @@ def _ensure_image(
     if xref in images:
         return images[xref]["id"]
 
-    info = doc.extract_image(xref)
+    info = _pagecache.extract_image(doc, xref)
     image_id = f"img_{len(images):03d}"
     images[xref] = {
         "id": image_id,

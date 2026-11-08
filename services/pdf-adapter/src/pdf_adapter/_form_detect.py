@@ -18,6 +18,8 @@ line in a normal text doc doesn't trigger phantom fields).
 """
 from __future__ import annotations
 
+from . import _pagecache
+
 from typing import Any
 
 import pymupdf
@@ -120,7 +122,7 @@ def page_reads_as_prose(page: pymupdf.Page) -> bool:
     an article, a CV body) — auto-detect should not fire on these even
     if some shape candidates happen to look form-ish."""
     try:
-        blocks = page.get_text("dict").get("blocks", [])
+        blocks = _pagecache.text_dict(page).get("blocks", [])
     except Exception:
         return False
     long_spans = 0
@@ -171,7 +173,7 @@ def _attach_labels(page: pymupdf.Page, candidates: list[dict[str, Any]]) -> None
     """Borrow the nearest text span as each field's name."""
     spans: list[dict[str, Any]] = []
     try:
-        for block in page.get_text("dict").get("blocks", []):
+        for block in _pagecache.text_dict(page).get("blocks", []):
             if block.get("type") != 0:
                 continue
             for line in block.get("lines", []):
