@@ -85,8 +85,53 @@ sleep 3
 systemctl is-active alldocs
 REMOTE
 
+# Health check.
+#
+# This was one unretried curl whose result nobody looked at, and it
+# misreported the same deploy in both directions: once it printed a
+# Cloudflare 522 and still exited 0, and once it exited 56 on a
+# transient network error from the operator's laptop while the build,
+# the restart and the site were all completely fine. A deploy that
+# genuinely breaks the site and one that works looked identical.
+#
+# So: retry while the service finishes coming up, insist on a real
+# 200 carrying "status":"ok", and say plainly which half failed when it
+# does not arrive — the code is already on the box by this point, so a
+# failure here is the public endpoint not confirming, not a bad deploy.
 echo "==> Health check..."
-sleep 1
-curl -s --connect-timeout 20 https://getalldocs.com/api/health | head -c 300
+HEALTH_TRIES="${ALLDOCS_HEALTH_TRIES:-6}"
+body=""
+code=""
+tmp_health="$(mktemp)"
+trap 'rm -f "$tmp_health"' EXIT
+
+for attempt in $(seq 1 "$HEALTH_TRIES"); do
+  code="$(curl -s -o "$tmp_health" -w '%{http_code}' --max-time 15 \
+    https://getalldocs.com/api/health || echo 000)"
+  body="$(head -c 300 "$tmp_health" 2>/dev/null || true)"
+  case "$code" in
+    200)
+      if printf '%s' "$body" | grep -q '"status":"ok"'; then
+        echo "  $body"
+        echo "==> Done. https://getalldocs.com is updated."
+        exit 0
+      fi
+      echo "  attempt $attempt: HTTP 200 but no ok status — retrying"
+      ;;
+    000) echo "  attempt $attempt: no response (network/TLS) — retrying" ;;
+    *)   echo "  attempt $attempt: HTTP $code — retrying" ;;
+  esac
+  sleep 5
+done
+
 echo
-echo "==> Done. https://getalldocs.com is updated."
+echo "!! Health check never returned 200 with status ok."
+echo "!! Last HTTP: ${code:-none}"
+echo "!! Last body: ${body:-<empty>}"
+echo "!!"
+echo "!! The code IS on the server and the service was restarted before"
+echo "!! this ran, so this is the PUBLIC endpoint failing to confirm, not"
+echo "!! necessarily a bad build. Check the box directly:"
+echo "!!   ssh -i $KEY $SSH_USER@$HOST \\"
+echo "!!     'systemctl status alldocs --no-pager; curl -s localhost:3000/api/health'"
+exit 1
