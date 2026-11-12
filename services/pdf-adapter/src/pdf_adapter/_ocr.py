@@ -35,10 +35,28 @@ import pymupdf
 # the larger raster doesn't help and the extra pixels just cost time.
 OCR_DPI = 200
 
-# Words below this Tesseract confidence are dropped. The decorative /
-# photographic regions of a design document produce low-confidence
-# garbage tokens; 60 cleanly separates real text from noise in testing.
-MIN_WORD_CONFIDENCE = 60
+# Words below this Tesseract confidence are dropped.
+#
+# This was 60, and 60 was costing a third of the text. Measured across
+# 18 real phone photos of documents: at 60 we kept 582 words with 19
+# junk tokens; at 30, 767 words with 29. So the floor was discarding
+# 185 real words to avoid 10 pieces of junk.
+#
+# The comment it replaces said the floor existed to suppress garbage
+# from the decorative and photographic regions of design documents. It
+# does not do that. The junk tokens are identical at every threshold
+# from 60 down to 0 — they are page-edge rules read as "|" and the
+# like, which Tesseract reports with HIGH confidence. A confidence
+# floor cannot catch them, and never was.
+#
+# What it did catch was italics and unfamiliar proper nouns, which is
+# exactly the content worth keeping: on a references page it silently
+# deleted "barbadensis", "Bello-Micheal CO" and "spp." — words the
+# reader needs and would have no way of knowing were missing.
+#
+# 30 rather than 0 because the gain flattens below it while noise keeps
+# accruing; dropping to 10 bought 116 more words for 7 more junk.
+MIN_WORD_CONFIDENCE = 30
 
 # A page is treated as "scanned" if image layers cover at least this
 # fraction of it AND it has fewer than _MAX_NATIVE_CHARS characters of
