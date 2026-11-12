@@ -67,6 +67,15 @@ MIN_DESKEW_DEG = 0.3
 #: itself, and warping to it would crop real content away — which is the
 #: one outcome worse than doing nothing.
 MIN_MASK_COVERAGE = 0.85
+#: Where the paper should land. Not 255: leaving headroom keeps paper
+#: texture and faint pencil from being clipped into pure white.
+PAPER_TARGET = 245.0
+#: The ink anchor never rises above this. On a near-empty page the low
+#: percentile is still paper, and stretching from there crushes the
+#: midtones of any photograph or colour panel on the page.
+INK_ANCHOR_CAP = 120.0
+SHARPEN_SIGMA = 1.2
+SHARPEN_AMOUNT = 0.45
 #: Below this the page is already evenly lit and flattening it is a
 #: requantisation that buys nothing — measured to cost OCR characters
 #: on an evenly lit page rather than gain any.
@@ -106,20 +115,14 @@ def dewarp_image(pil_rgb: Any) -> tuple[Any, dict[str, Any]]:
             # No usable quad. Still worth flattening the lighting: that
             # correction cannot crop anything, so it is safe even when
             # we have no idea where the page edges are.
-            unevenness = _illumination_unevenness(bgr)
-            report["unevenness"] = round(unevenness, 3)
-            if unevenness < MIN_UNEVENNESS:
-                # Already evenly lit. Re-rendering it would only cost a
-                # requantisation — on an evenly lit page that measurably
-                # lost OCR characters rather than gaining any.
-                report["applied"] = False
-                report["stages"] = []
-                report["reason"] = "nothing-to-correct"
-                return pil_rgb, report
-            flat = _flatten_illumination(bgr)
+            # No page outline, so no warp — but the enhancement needs
+            # nothing detected, and these close-ups are exactly the
+            # photos a scanner app is expected to clean up.
+            report["unevenness"] = round(_illumination_unevenness(bgr), 3)
+            enhanced = enhance_document(bgr)
             report["applied"] = True
-            report["stages"] = ["illumination"]
-            out = cv2.cvtColor(flat, cv2.COLOR_BGR2RGB)
+            report["stages"] = ["enhance"]
+            out = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
             return Image.fromarray(out), report
 
         warped = _four_point_transform(bgr, quad)
@@ -130,8 +133,8 @@ def dewarp_image(pil_rgb: Any) -> tuple[Any, dict[str, Any]]:
             stages.append("deskew")
         report["deskew_deg"] = round(float(angle), 2)
 
-        warped = _flatten_illumination(warped)
-        stages.append("illumination")
+        warped = enhance_document(warped)
+        stages.append("enhance")
 
         report["applied"] = True
         report["reason"] = "ok"
@@ -423,6 +426,64 @@ def _illumination_unevenness(bgr: Any) -> float:
     if lo < 1.0:
         lo = 1.0
     return hi / lo
+
+
+def enhance_document(bgr: Any) -> Any:
+    """Turn a photographed page into something that reads as a scan.
+
+    This, not the perspective warp, is what a scanner app actually sells.
+    A photo of a page is grey, flat and shadowed; a scan is black ink on
+    white paper. Getting there is three steps after the lighting is
+    flattened: put the paper at white, put the ink at black, and
+    sharpen what the camera softened.
+
+    Colour is kept. Hard binarisation would read as more "scan-like"
+    still, but it throws away blue biro, highlighter and anything
+    printed in colour, and it destroys a photograph pasted into a page.
+    Keeping colour is the difference between a tool that cleans
+    documents and one that only works on black text.
+
+    Unlike the perspective stage this needs nothing detected, so it runs
+    on every photo — including the close-ups where the page overruns the
+    frame and there is no quad to find. That is the whole point: those
+    are the ones the warp could not help.
+    """
+    flat = _flatten_illumination(bgr)
+
+    # Work on lightness alone, in LAB, and leave the colour channels
+    # untouched.
+    #
+    # Scaling B, G and R together was the obvious thing and it is wrong:
+    # multiplying all three widens the gaps between them, so saturation
+    # climbs with brightness. On a real photo the page came out nicely
+    # white and the hand holding it came out fluorescent orange. Moving
+    # only L lifts the paper and deepens the ink while every hue and
+    # chroma in the frame stays where the camera put it.
+    lab = cv2.cvtColor(flat, cv2.COLOR_BGR2LAB)
+    lightness = lab[:, :, 0].astype(np.float32)
+
+    # The 85th percentile is the paper: above most of the ink, below any
+    # specular highlight. The mean would be dragged down by dense text.
+    paper = float(np.percentile(lightness, 85))
+    if paper < 1.0:
+        paper = 1.0
+    lightness = lightness * (PAPER_TARGET / paper)
+
+    # Pull the ink down. Anchor on a low percentile, but never above
+    # INK_ANCHOR_CAP: on a near-empty page the 5th percentile is still
+    # paper, and stretching from there would crush the midtones of a
+    # photograph or a colour panel into black.
+    ink = min(float(np.percentile(lightness, 5)), INK_ANCHOR_CAP)
+    span = max(1.0, PAPER_TARGET - ink)
+    lightness = (lightness - ink) * (255.0 / span)
+
+    lab[:, :, 0] = np.clip(lightness, 0, 255).astype(np.uint8)
+    out = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+
+    # Unsharp mask. A phone's own denoising softens pen strokes, and
+    # Tesseract keys off stroke edges.
+    blurred = cv2.GaussianBlur(out, (0, 0), SHARPEN_SIGMA)
+    return cv2.addWeighted(out, 1.0 + SHARPEN_AMOUNT, blurred, -SHARPEN_AMOUNT, 0)
 
 
 def _flatten_illumination(bgr: Any) -> Any:
