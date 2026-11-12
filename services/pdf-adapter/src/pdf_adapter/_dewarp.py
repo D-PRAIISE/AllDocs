@@ -62,6 +62,18 @@ MAX_ASPECT = 5.0
 MAX_DESKEW_DEG = 15.0
 #: Below this a rotation costs a resample and buys nothing.
 MIN_DESKEW_DEG = 0.3
+#: The detected quad must account for this much of the lit page region.
+#: Below it we have found something inside the page rather than the page
+#: itself, and warping to it would crop real content away — which is the
+#: one outcome worse than doing nothing.
+MIN_MASK_COVERAGE = 0.85
+#: Below this the page is already evenly lit and flattening it is a
+#: requantisation that buys nothing — measured to cost OCR characters
+#: on an evenly lit page rather than gain any.
+MIN_UNEVENNESS = 1.25
+#: Every page corner must sit at least this far inside the frame. A
+#: corner on the border means the photo cut that side of the page off.
+FRAME_MARGIN = 0.015
 #: Detection runs on a downscaled copy; the quad is scaled back up.
 DETECT_LONG_EDGE = 1000
 
@@ -94,10 +106,19 @@ def dewarp_image(pil_rgb: Any) -> tuple[Any, dict[str, Any]]:
             # No usable quad. Still worth flattening the lighting: that
             # correction cannot crop anything, so it is safe even when
             # we have no idea where the page edges are.
+            unevenness = _illumination_unevenness(bgr)
+            report["unevenness"] = round(unevenness, 3)
+            if unevenness < MIN_UNEVENNESS:
+                # Already evenly lit. Re-rendering it would only cost a
+                # requantisation — on an evenly lit page that measurably
+                # lost OCR characters rather than gaining any.
+                report["applied"] = False
+                report["stages"] = []
+                report["reason"] = "nothing-to-correct"
+                return pil_rgb, report
             flat = _flatten_illumination(bgr)
             report["applied"] = True
             report["stages"] = ["illumination"]
-            report["reason"] = report.get("reason", "no-quad")
             out = cv2.cvtColor(flat, cv2.COLOR_BGR2RGB)
             return Image.fromarray(out), report
 
@@ -128,6 +149,99 @@ def dewarp_image(pil_rgb: Any) -> tuple[Any, dict[str, Any]]:
 # --- stages ---------------------------------------------------------------
 
 
+def _page_contours(bgr: Any) -> list[Any]:
+    """Candidate page outlines, from two independent views of the image.
+
+    Canny alone was not enough. On real phone photos of a notepad — a
+    pale page on a pale desk, a spiral binding chewing up the top edge,
+    a hand over the bottom — it returned outlines of 5 to 14 sides on
+    every single test image and the page was never found.
+
+    So also threshold on brightness, which is what actually separates a
+    lit page from the surface under it, and close the result hard enough
+    to swallow the binding and the fingers. Whichever view yields a
+    usable quad first wins; the gate downstream is unchanged.
+    """
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    out: list[Any] = []
+
+    # View 1 — the page as a bright region.
+    _, bright = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    k = np.ones((9, 9), np.uint8)
+    bright = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, k, iterations=3)
+    bright = cv2.morphologyEx(bright, cv2.MORPH_OPEN, k, iterations=2)
+    found = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    out += list(found[0] if len(found) == 2 else found[1])
+
+    # View 2 — the page as an edge.
+    edges = cv2.Canny(gray, 50, 150)
+    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=2)
+    found = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    out += list(found[0] if len(found) == 2 else found[1])
+
+    return sorted(out, key=cv2.contourArea, reverse=True)[:8]
+
+
+def _quad_from_contour(contour: Any) -> Any:
+    """Four corners for a contour, or None.
+
+    A photographed page rarely simplifies to exactly four points at one
+    fixed tolerance — a single hardcoded epsilon of 0.02 was why real
+    photos never produced a quad. Take the convex hull first, which
+    removes the bites the binding and fingers take out of the outline,
+    then sweep the tolerance and accept the first four-sided convex
+    result.
+    """
+    hull = cv2.convexHull(contour)
+    peri = cv2.arcLength(hull, True)
+    if peri <= 0:
+        return None
+    for eps in (0.01, 0.015, 0.02, 0.03, 0.04, 0.05, 0.07, 0.09):
+        approx = cv2.approxPolyDP(hull, eps * peri, True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            return approx.reshape(4, 2).astype(np.float32)
+
+    # No minAreaRect fallback. It was tried and removed: on real photos
+    # it happily returned a rectangle around some bright region INSIDE
+    # the page and the warp then cropped half the writing away. A page
+    # whose outline will not simplify to four corners is a page we have
+    # not found.
+    return None
+
+
+def _page_mask(gray: Any) -> Any:
+    """Binary mask of the lit page region."""
+    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    k = np.ones((9, 9), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=3)
+    return cv2.morphologyEx(mask, cv2.MORPH_OPEN, k, iterations=2)
+
+
+def _page_runs_off_frame(mask: Any) -> int:
+    """How many frame edges the page touches.
+
+    A close-up phone photo of a notepad usually has the page running
+    out of shot on two or more sides. There is then no complete
+    quadrilateral in the image, and anything we "detect" is a region
+    inside the page — warping to it crops real content away. Counting
+    the touched edges is how we tell that case apart from a page lying
+    whole in the frame.
+    """
+    h, w = mask.shape[:2]
+    band = max(2, min(h, w) // 100)
+    touched = 0
+    if mask[:band, :].mean() > 96:
+        touched += 1
+    if mask[-band:, :].mean() > 96:
+        touched += 1
+    if mask[:, :band].mean() > 96:
+        touched += 1
+    if mask[:, -band:].mean() > 96:
+        touched += 1
+    return touched
+
+
 def _find_page_quad(bgr: Any, report: dict[str, Any]) -> Any:
     """The page's four corners in full-resolution coordinates, or None."""
     h, w = bgr.shape[:2]
@@ -139,14 +253,27 @@ def _find_page_quad(bgr: Any, report: dict[str, Any]) -> Any:
         else bgr
     )
 
-    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(gray, 50, 150)
-    # Close gaps in the page outline — a shadowed corner often breaks it.
-    edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=2)
+    gray = cv2.GaussianBlur(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), (5, 5), 0)
+    mask = _page_mask(gray)
 
-    found = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = found[0] if len(found) == 2 else found[1]
+    edges_touched = _page_runs_off_frame(mask)
+    report["page_edges_in_frame"] = 4 - edges_touched
+    if edges_touched:
+        # Perspective recovery needs all four page edges in shot. If the
+        # page leaves the picture on even one side there is no complete
+        # quadrilateral, and whatever we detect is a region INSIDE the
+        # page — warping to that silently crops real content away, which
+        # is the one outcome worse than doing nothing.
+        #
+        # This was learned the hard way on 14 real phone photos of a
+        # notepad: a looser rule fired on 13 of them and cropped the
+        # title, the right margin or the last lines off most. Lighting
+        # is still flattened; only the warp is withheld.
+        report["reason"] = "page-overruns-frame (%d edges)" % edges_touched
+        return None
+
+    mask_area = float(cv2.countNonZero(mask))
+    contours = _page_contours(small)
     if not contours:
         report["reason"] = "no-contours"
         return None
@@ -154,27 +281,43 @@ def _find_page_quad(bgr: Any, report: dict[str, Any]) -> Any:
     frame_area = float(small.shape[0] * small.shape[1])
     rejects: list[str] = []
 
-    for contour in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
-        peri = cv2.arcLength(contour, True)
-        approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
-        if len(approx) != 4:
-            rejects.append("sides=%d" % len(approx))
+    for contour in contours:
+        pts = _quad_from_contour(contour)
+        if pts is None:
+            rejects.append("no-quad")
             continue
-        if not cv2.isContourConvex(approx):
-            rejects.append("concave")
-            continue
-        frac = cv2.contourArea(approx) / frame_area
+        frac = abs(cv2.contourArea(pts.astype(np.float32))) / frame_area
         if frac < MIN_AREA_FRACTION:
             rejects.append("small=%.2f" % frac)
             continue
         if frac > MAX_AREA_FRACTION:
             rejects.append("fills-frame=%.2f" % frac)
             continue
-        pts = approx.reshape(4, 2).astype(np.float32)
         if not _corners_square_enough(pts):
             rejects.append("corner-angles")
             continue
+        # The quad has to BE the page, not a bright block within it.
+        # Without this a region inside the writing scored four clean
+        # corners and the warp cropped the rest of the page away.
+        quad_area = abs(cv2.contourArea(pts.astype(np.float32)))
+        if mask_area > 0 and quad_area / mask_area < MIN_MASK_COVERAGE:
+            rejects.append("covers-%.0f%%-of-page" % (100 * quad_area / mask_area))
+            continue
+        # Every corner must sit inside the frame with real background
+        # around it. A corner pinned to the border means that side of
+        # the page is cut off by the photo.
+        mh, mw = small.shape[:2]
+        margin_x, margin_y = mw * FRAME_MARGIN, mh * FRAME_MARGIN
+        if (
+            pts[:, 0].min() < margin_x
+            or pts[:, 1].min() < margin_y
+            or pts[:, 0].max() > mw - margin_x
+            or pts[:, 1].max() > mh - margin_y
+        ):
+            rejects.append("corner-on-frame-edge")
+            continue
         report["quad_area_fraction"] = round(float(frac), 3)
+        report["page_coverage"] = round(float(quad_area / mask_area), 3) if mask_area else None
         return pts / scale
 
     report["reason"] = "no-quad (%s)" % ("; ".join(rejects[:4]) or "none considered")
@@ -260,6 +403,26 @@ def _deskew(bgr: Any) -> tuple[Any, float]:
         borderMode=cv2.BORDER_REPLICATE,
     )
     return rotated, angle
+
+
+def _illumination_unevenness(bgr: Any) -> float:
+    """How far the lighting varies across the page, as a ratio.
+
+    1.0 is perfectly flat. A shadow across one side pushes it well
+    above 1.2. Measured on the illumination field rather than the
+    pixels so text does not count as darkness.
+    """
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+    small = cv2.resize(gray, (max(1, w // 16), max(1, h // 16)),
+                       interpolation=cv2.INTER_AREA)
+    k = max(3, (min(small.shape[:2]) // 6) | 1)
+    field = cv2.medianBlur(cv2.dilate(small, np.ones((5, 5), np.uint8)), k)
+    lo = float(np.percentile(field, 5))
+    hi = float(np.percentile(field, 95))
+    if lo < 1.0:
+        lo = 1.0
+    return hi / lo
 
 
 def _flatten_illumination(bgr: Any) -> Any:
