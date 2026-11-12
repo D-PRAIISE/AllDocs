@@ -15,8 +15,14 @@
 #   5. restarts the service + health-checks
 #
 # The box is SHARED with livebooost.com (nginx :80/:443, a pm2 Node app on
-# :5000, MongoDB in Docker) and has a single ARM core, so the heavy steps
-# run under `nice` to keep that site responsive during a deploy.
+# :5000, MongoDB in Docker), so the heavy steps run under `nice` to keep
+# that site responsive during a deploy.
+#
+# Measured 2026-11-12: 3x Neoverse-N1 (aarch64), 17 GB RAM, 97 GB disk.
+# An earlier comment here said "a single ARM core" and that was wrong —
+# it had been repeated from the original provisioning note rather than
+# measured, and it was used to argue against parallelism. `nice` still
+# earns its place on a shared host whatever the core count.
 #
 # Override the target with env vars if your server/key differ:
 #   ALLDOCS_HOST=1.2.3.4 ALLDOCS_KEY=~/.ssh/mykey bash deploy/update.sh
