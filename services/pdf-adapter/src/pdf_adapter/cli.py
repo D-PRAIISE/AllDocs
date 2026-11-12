@@ -62,6 +62,14 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--no-dewarp",
+        action="store_true",
+        help=(
+            "Image import: skip the scanner-style correction "
+            "(perspective, deskew, lighting) applied to photographed pages"
+        ),
+    )
+    parser.add_argument(
         "--no-ocr",
         action="store_true",
         help="Import: skip OCR of scanned/rasterized pages (OCR is on by default).",
@@ -153,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
                 enable_ocr=not args.no_ocr,
                 ocr_lang=args.ocr_lang,
                 ocr_granularity=args.ocr_granularity,
+                enable_dewarp=not args.no_dewarp,
             )
         else:
             udm = import_pdf(

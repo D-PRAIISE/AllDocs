@@ -11,6 +11,12 @@ dependencies = [
     # OCR for scanned / rasterized pages. pytesseract is a thin wrapper —
     # the Tesseract binary itself is a system dependency (see _ocr.py).
     "pytesseract>=0.3.10",
+    # Scanner-style correction of photographed pages (_dewarp.py):
+    # perspective, deskew, lighting. Already present on the server as a
+    # transitive dep of pdf2docx, but pdf-adapter imports cv2 directly
+    # now, so it is declared here rather than relying on that.
+    "opencv-python-headless>=4.8",
+    "numpy>=1.24",
 ]
 
 [project.scripts]

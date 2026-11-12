@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import uuid
 from pathlib import Path
 from typing import Any
 
-from . import _ocr
+from . import _dewarp, _ocr
 
 UDM_VERSION = "0.1.0"
 
@@ -39,6 +40,7 @@ def import_image(
     enable_ocr: bool = True,
     ocr_lang: str | None = None,
     ocr_granularity: str = "line",
+    enable_dewarp: bool = True,
 ) -> dict[str, Any]:
     """Read an image file and produce a single-page fixed UDM document.
 
@@ -55,7 +57,6 @@ def import_image(
         # pixel layout (PIL's palette / RGBA modes confuse Tesseract
         # under some configurations).
         rgb = im.convert("RGB")
-        width_px, height_px = rgb.size
         # The format the file was actually stored as — used for the
         # data URL mime type and the source_format metadata. Falls
         # back to PNG when PIL can't tell us.
@@ -63,6 +64,34 @@ def import_image(
         if fmt == "jpg":
             fmt = "jpeg"
 
+    # Scanner-style correction, before anything measures the image.
+    #
+    # A photographed page is a trapezoid, usually tilted, usually lit
+    # unevenly, and Tesseract is poor at all three. On a deliberately
+    # hard synthetic photo it recovered nothing at all before this and
+    # the full text after (tests/dewarp_test.py). The correction gates
+    # itself hard and returns the original whenever it is unsure, so a
+    # file that is already flat — anything out of a scanner app — comes
+    # through untouched.
+    #
+    # The corrected pixels REPLACE the stored page: OCR reads them, and
+    # the editor shows them, which is the whole point. The report is
+    # kept on the layer so the UI can offer the original back later.
+    dewarp_report: dict[str, Any] = {"applied": False, "reason": "disabled"}
+    if enable_dewarp:
+        rgb, dewarp_report = _dewarp.dewarp_image(rgb)
+        if dewarp_report.get("applied"):
+            buf = io.BytesIO()
+            # Keep PNG sources lossless; a photo re-encodes as JPEG so
+            # correcting a 10-megapixel image does not triple its size.
+            if fmt == "png":
+                rgb.save(buf, format="PNG", optimize=True)
+            else:
+                rgb.save(buf, format="JPEG", quality=92, optimize=True)
+                fmt = "jpeg"
+            raw = buf.getvalue()
+
+    width_px, height_px = rgb.size
     width_pt = width_px * _PX_TO_PT
     height_pt = height_px * _PX_TO_PT
 
@@ -86,7 +115,7 @@ def import_image(
             "y": {"value": 0, "unit": "pt"},
             "width": {"value": width_pt, "unit": "pt"},
             "height": {"value": height_pt, "unit": "pt"},
-            "_meta": {"z_index": 0},
+            "_meta": {"z_index": 0, "dewarp": dewarp_report},
         }
     ]
 
