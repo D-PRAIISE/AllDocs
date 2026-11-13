@@ -42,10 +42,19 @@ except Exception:  # pragma: no cover
 #: Rules on lined paper are longer than any word. Anything horizontal and
 #: at least this fraction of the page width is furniture, not ink.
 RULE_MIN_WIDTH_FRAC = 0.35
-#: Characters within this fraction of the page width get merged into one
-#: line. Too small and a line breaks at every word gap; too large and
-#: two columns become one line.
-WORD_GAP_FRAC = 0.035
+#: A row counts as part of a line when it carries at least this share
+#: of the ink of the busiest row. Relative rather than absolute so the
+#: same number works on a dense printed page and a sparse handwritten
+#: one.
+#:
+#: Swept on real photos. At 0.06 the valleys between printed lines never
+#: cleared the floor — show-through from the reverse of the page keeps
+#: ink in them — and a 24-line references page read as 6. At 0.20 it
+#: reads as 20, a handwritten notepad as 13 against 8 actual, and the
+#: boxes span 91-97% of the page width throughout, which is the number
+#: that matters: a crop holding a whole line is what TrOCR needs, and
+#: the contour approach this replaced could never get past about 35%.
+ROW_INK_FRACTION = 0.20
 #: A line of handwriting is at least this tall. Below it we are looking
 #: at speckle, a stray dot, or the remains of a rule.
 MIN_LINE_HEIGHT_FRAC = 0.012
@@ -54,8 +63,6 @@ MIN_LINE_HEIGHT_FRAC = 0.012
 MAX_LINE_HEIGHT_FRAC = 0.14
 #: A line must be at least this wide — a single character is not a line.
 MIN_LINE_WIDTH_FRAC = 0.06
-#: Two boxes overlapping vertically by more than this are the same line.
-MERGE_OVERLAP = 0.5
 
 
 def available() -> bool:
@@ -68,6 +75,21 @@ def segment_lines(pil_rgb: Any) -> list[tuple[int, int, int, int]]:
 
     Returns ``(x, y, w, h)`` tuples. An empty list means no lines were
     found, which is a valid answer — a photo of a desk has none.
+
+    Uses a horizontal projection profile: count ink per row, and cut
+    where the count falls away. This replaced a dilate-and-contour
+    approach that did not converge. That version fragmented every line
+    at its wider word gaps — mean box width stuck around 35% of the page
+    however the gap kernel was tuned — and its greedy merge step grew a
+    box until it overlapped the next line and swallowed that too. A
+    projection profile has no such parameter to tune: a line of text IS
+    a run of rows containing ink, and the gap between lines IS the
+    valley between them.
+
+    It assumes the page is roughly horizontal, which after the
+    perspective and deskew stages it is. A heavily rotated page would
+    smear the profile flat, and the empty result that produces is the
+    honest answer rather than a wrong one.
     """
     if not _CV:
         return []
@@ -82,30 +104,68 @@ def segment_lines(pil_rgb: Any) -> list[tuple[int, int, int, int]]:
     ink = cv2.adaptiveThreshold(
         gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 25, 15
     )
-
     ink = _strip_rules(ink, w)
+    ink = _strip_border(ink)
 
-    # Merge characters into lines. Wide and short: join along the line,
-    # never across to the one below.
-    gap = max(3, int(w * WORD_GAP_FRAC))
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (gap, 3))
-    merged = cv2.dilate(ink, kernel, iterations=1)
+    # Ink pixels per row, smoothed so a gap between two words on the
+    # same row does not read as a valley.
+    profile = (ink > 0).sum(axis=1).astype(np.float32)
+    window = max(3, int(short * 0.004) | 1)
+    kernel = np.ones(window, dtype=np.float32) / window
+    profile = np.convolve(profile, kernel, mode="same")
 
-    found = cv2.findContours(merged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = found[0] if len(found) == 2 else found[1]
+    if profile.max() <= 0:
+        return []
+    # A row belongs to a line when it carries a real share of the ink of
+    # the busiest row. Relative, so it holds for a dense page and a
+    # sparse one alike.
+    floor = profile.max() * ROW_INK_FRACTION
 
     min_h = short * MIN_LINE_HEIGHT_FRAC
     max_h = short * MAX_LINE_HEIGHT_FRAC
     min_w = w * MIN_LINE_WIDTH_FRAC
 
     boxes: list[tuple[int, int, int, int]] = []
-    for c in contours:
-        x, y, bw, bh = cv2.boundingRect(c)
-        if bh < min_h or bh > max_h or bw < min_w:
+    y = 0
+    while y < h:
+        if profile[y] <= floor:
+            y += 1
             continue
-        boxes.append((x, y, bw, bh))
+        start_row = y
+        while y < h and profile[y] > floor:
+            y += 1
+        band_h = y - start_row
+        if band_h < min_h or band_h > max_h:
+            continue
+        # Horizontal extent: the columns of this band that carry ink.
+        band = ink[start_row:y, :]
+        cols = np.where((band > 0).any(axis=0))[0]
+        if cols.size == 0:
+            continue
+        x0, x1 = int(cols[0]), int(cols[-1])
+        if (x1 - x0) < min_w:
+            continue
+        boxes.append((x0, start_row, x1 - x0, band_h))
 
-    return _merge_same_line(boxes)
+    return boxes
+
+
+def _strip_border(ink: Any) -> Any:
+    """Erase ink touching the frame edge.
+
+    These photos have a dark page edge that thresholds to a solid band
+    down one or both sides. Left in, it puts ink in every single row and
+    the projection profile never reaches a valley, so the whole page
+    reads as one line.
+    """
+    h, w = ink.shape[:2]
+    margin = max(2, int(min(h, w) * 0.012))
+    out = ink.copy()
+    out[:margin, :] = 0
+    out[-margin:, :] = 0
+    out[:, :margin] = 0
+    out[:, -margin:] = 0
+    return out
 
 
 def _strip_rules(ink: Any, page_w: int) -> Any:
@@ -124,32 +184,3 @@ def _strip_rules(ink: Any, page_w: int) -> Any:
     # bridges two lines.
     rules = cv2.dilate(rules, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3)))
     return cv2.subtract(ink, rules)
-
-
-def _merge_same_line(
-    boxes: list[tuple[int, int, int, int]]
-) -> list[tuple[int, int, int, int]]:
-    """Combine boxes that are vertically the same line, then sort."""
-    if not boxes:
-        return []
-    boxes = sorted(boxes, key=lambda b: b[1])
-    out: list[list[int]] = []
-    for x, y, w, h in boxes:
-        placed = False
-        for cur in out:
-            cy, ch = cur[1], cur[3]
-            overlap = min(y + h, cy + ch) - max(y, cy)
-            if overlap > MERGE_OVERLAP * min(h, ch):
-                nx = min(cur[0], x)
-                ny = min(cur[1], y)
-                cur[2] = max(cur[0] + cur[2], x + w) - nx
-                cur[3] = max(cur[1] + cur[3], y + h) - ny
-                cur[0], cur[1] = nx, ny
-                placed = True
-                break
-        if not placed:
-            out.append([x, y, w, h])
-    # Reading order: top to bottom, then left to right for anything
-    # sharing a band.
-    out.sort(key=lambda b: (b[1], b[0]))
-    return [(b[0], b[1], b[2], b[3]) for b in out]
