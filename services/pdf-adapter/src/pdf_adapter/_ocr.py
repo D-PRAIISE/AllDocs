@@ -148,6 +148,30 @@ def _ensure_merged_tessdata(sys_tessdata: Path, user_tessdata: Path) -> str:
     return _MERGED_TESSDATA_DIR
 
 
+#: Characters that a page edge, a binding, or a ruled line degrades into
+#: when thresholded. A token made of nothing but these is furniture, not
+#: text. Deliberately narrow: "&" is NOT here, because a references page
+#: really does contain "Scientific & Engineering" — a wider rule would
+#: have eaten it.
+_RULE_GLYPHS = frozenset(
+    ["|", "/", "\\", "_", "~", "-", "—", "–", "│"]
+)
+
+
+def _is_rule_artifact(text: str) -> bool:
+    """True for a token that is a scanned line rather than a word.
+
+    These arrive with HIGH confidence — Tesseract is quite sure it saw a
+    vertical stroke — so the confidence floor never touches them. Left
+    in, they reach the user as paragraphs containing a single "|" in an
+    exported Word document.
+    """
+    stripped = text.strip()
+    if not stripped or len(stripped) > 2:
+        return False
+    return all(ch in _RULE_GLYPHS for ch in stripped)
+
+
 def _setup_tesseract() -> None:
     """Locate Tesseract + configure pytesseract + resolve TESSDATA_PREFIX.
     Idempotent. Raises RuntimeError when Tesseract or pytesseract is
@@ -273,6 +297,8 @@ def ocr_image(
                 conf = -1.0
             if conf < MIN_WORD_CONFIDENCE:
                 continue
+            if _is_rule_artifact(text):
+                continue
             px0 = int(data["left"][i])
             py0 = int(data["top"][i])
             px1 = px0 + int(data["width"][i])
@@ -304,6 +330,8 @@ def ocr_image(
         except (TypeError, ValueError):
             conf = -1.0
         if conf < MIN_WORD_CONFIDENCE:
+            continue
+        if _is_rule_artifact(text):
             continue
         key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
         lines.setdefault(key, []).append(i)
